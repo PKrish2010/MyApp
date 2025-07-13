@@ -1,28 +1,27 @@
-import {
-  View,
-  Text,
-  Alert,
-  TouchableOpacity,
-  TextInput,
-  ActivityIndicatorBase,
-  ActivityIndicator,
-} from "react-native";
-import { useRouter } from "expo-router";
 import { useUser } from "@clerk/clerk-expo";
-import { useState } from "react";
-import { API_URL } from "../../constants/api";
-import { styles } from "../../assets/styles/create.styles";
-import { COLORS } from "../../constants/colors";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
+import { useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import { styles } from "../../assets/styles/create.styles";
+import { API_URL } from "../../constants/api";
+import { COLORS } from "../../constants/colors";
 
 const CATEGORIES = [
-  { id: "food", name: "Food & Drinks", icon: "fast-food" },
-  { id: "shopping", name: "Shopping", icon: "cart" },
-  { id: "transportation", name: "Transportation", icon: "car" },
-  { id: "entertainment", name: "Entertainment", icon: "film" },
-  { id: "bills", name: "Bills", icon: "receipt" },
-  { id: "income", name: "Income", icon: "cash" },
-  { id: "other", name: "Other", icon: "ellipsis-horizontal" },
+  { id: "food", name: "Food & Drinks", icon: "restaurant-outline" },
+  { id: "shopping", name: "Shopping", icon: "bag-outline" },
+  { id: "transportation", name: "Transportation", icon: "car-outline" },
+  { id: "entertainment", name: "Entertainment", icon: "game-controller-outline" },
+  { id: "bills", name: "Bills", icon: "receipt-outline" },
+  { id: "income", name: "Income", icon: "cash-outline" },
+  { id: "other", name: "Other", icon: "ellipsis-horizontal-outline" },
 ];
 
 const CreateScreen = () => {
@@ -36,14 +35,27 @@ const CreateScreen = () => {
   const [isLoading, setIsLoading] = useState(false);
 
   const handleCreate = async () => {
+    // Check if user is available
+    if (!user) {
+      Alert.alert("Error", "User not authenticated");
+      return;
+    }
+
     // validations
-    if (!title.trim()) return Alert.alert("Error", "Please enter a transaction title");
+    if (!title.trim()) {
+      Alert.alert("Error", "Please enter a transaction title");
+      return;
+    }
+    
     if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
       Alert.alert("Error", "Please enter a valid amount");
       return;
     }
 
-    if (!selectedCategory) return Alert.alert("Error", "Please select a category");
+    if (!selectedCategory) {
+      Alert.alert("Error", "Please select a category");
+      return;
+    }
 
     setIsLoading(true);
     try {
@@ -59,23 +71,30 @@ const CreateScreen = () => {
         },
         body: JSON.stringify({
           user_id: user.id,
-          title,
+          title: title.trim(),
           amount: formattedAmount,
           category: selectedCategory,
         }),
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        console.log(errorData);
-        throw new Error(errorData.error || "Failed to create transaction");
+        const errorData = await response.json().catch(() => ({}));
+        console.log('Error response:', errorData);
+        throw new Error(errorData.error || `HTTP ${response.status}: Failed to create transaction`);
       }
 
+      // Clear form on success
+      setTitle("");
+      setAmount("");
+      setSelectedCategory("");
+      setIsExpense(true);
+      
       Alert.alert("Success", "Transaction created successfully");
       router.back();
     } catch (error) {
-      Alert.alert("Error", error.message || "Failed to create transaction");
       console.error("Error creating transaction:", error);
+      const errorMessage = error instanceof Error ? error.message : "Failed to create transaction";
+      Alert.alert("Error", errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -180,7 +199,7 @@ const CreateScreen = () => {
               onPress={() => setSelectedCategory(category.name)}
             >
               <Ionicons
-                name={category.icon}
+                name={category.icon as any}
                 size={20}
                 color={selectedCategory === category.name ? COLORS.white : COLORS.text}
                 style={styles.categoryIcon}
@@ -206,4 +225,5 @@ const CreateScreen = () => {
     </View>
   );
 };
+
 export default CreateScreen;
