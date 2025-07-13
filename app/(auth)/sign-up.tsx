@@ -1,12 +1,12 @@
+import { styles } from "@/assets/styles/auth.styles.js";
+import { useSignUp } from "@clerk/clerk-expo";
+import { Ionicons } from "@expo/vector-icons";
+import { Image } from "expo-image";
+import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Text, TextInput, TouchableOpacity, View } from "react-native";
-import { useSignUp } from "@clerk/clerk-expo";
-import { useRouter } from "expo-router";
-import { styles } from "@/assets/styles/auth.styles.js";
-import { Ionicons } from "@expo/vector-icons";
-import { COLORS } from "../../constants/colors";
-import { Image } from "expo-image";
 import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
+import { COLORS } from "../../constants/colors";
 
 export default function SignUpScreen() {
   const { isLoaded, signUp, setActive } = useSignUp();
@@ -35,7 +35,7 @@ export default function SignUpScreen() {
       // Set 'pendingVerification' to true to display second form
       // and capture OTP code
       setPendingVerification(true);
-    } catch (err) {
+    } catch (err: any) {
       if (err.errors?.[0]?.code === "form_identifier_exists") {
         setError("That email address is already in use. Please try another.");
       } else {
