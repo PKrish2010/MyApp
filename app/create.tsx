@@ -10,9 +10,9 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { styles } from "../../assets/styles/create.styles";
-import { API_URL } from "../../constants/api";
-import { COLORS } from "../../constants/colors";
+import { styles } from "../assets/styles/create.styles";
+import { API_URL } from "../constants/api";
+import { COLORS } from "../constants/colors";
 
 const CATEGORIES = [
   { id: "food", name: "Food & Drinks", icon: "restaurant-outline" },
