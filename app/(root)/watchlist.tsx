@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
@@ -15,7 +15,7 @@ const fetchYahooQuote = async (symbol: string) => {
   try {
     // Try the quote endpoint first - it's more reliable for current data
     const quoteResponse = await fetch(
-      `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}&fields=regularMarketPrice,regularMarketChange,regularMarketChangePercent,regularMarketPreviousClose,regularMarketDayHigh,regularMarketDayLow,regularMarketVolume,shortName,longName,marketState`
+      `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}&fields=regularMarketPrice,regularMarketChange,regularMarketChangePercent,regularMarketPreviousClose,regularMarketDayHigh,regularMarketDayLow,regularMarketVolume,shortName,longName,marketState,preMarketPrice,preMarketChange,preMarketChangePercent,postMarketPrice,postMarketChange,postMarketChangePercent`
     );
     
     if (quoteResponse.ok) {
@@ -24,13 +24,20 @@ const fetchYahooQuote = async (symbol: string) => {
       if (quoteData.quoteResponse && quoteData.quoteResponse.result && quoteData.quoteResponse.result[0]) {
         const quote = quoteData.quoteResponse.result[0];
         
-        // Debug log to see what we're getting
-        console.log('Quote data for', symbol, ':', quote);
-        
         const price = quote.regularMarketPrice ?? 0;
         const change = quote.regularMarketChange ?? 0;
         const changePercent = quote.regularMarketChangePercent ?? 0;
         const previousClose = quote.regularMarketPreviousClose ?? price;
+        
+        // Pre-market data
+        const preMarketPrice = quote.preMarketPrice ?? 0;
+        const preMarketChange = quote.preMarketChange ?? 0;
+        const preMarketChangePercent = quote.preMarketChangePercent ?? 0;
+        
+        // After-hours data
+        const postMarketPrice = quote.postMarketPrice ?? 0;
+        const postMarketChange = quote.postMarketChange ?? 0;
+        const postMarketChangePercent = quote.postMarketChangePercent ?? 0;
         
         return {
           symbol: quote.symbol || symbol,
@@ -42,18 +49,22 @@ const fetchYahooQuote = async (symbol: string) => {
           dayHigh: quote.regularMarketDayHigh ?? price,
           dayLow: quote.regularMarketDayLow ?? price,
           volume: quote.regularMarketVolume ?? 0,
-          marketState: quote.marketState || 'CLOSED'
+          marketState: quote.marketState || 'CLOSED',
+          preMarketPrice: preMarketPrice,
+          preMarketChange: preMarketChange,
+          preMarketChangePercent: preMarketChangePercent,
+          postMarketPrice: postMarketPrice,
+          postMarketChange: postMarketChange,
+          postMarketChangePercent: postMarketChangePercent
         };
       }
     }
     
     // Fallback to chart endpoint if quote endpoint fails
     const chartResponse = await fetch(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?region=US&lang=en-US&includePrePost=false&interval=1d&range=5d&corsDomain=finance.yahoo.com`
+      `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?region=US&lang=en-US&includePrePost=true&interval=1d&range=5d&corsDomain=finance.yahoo.com`
     );
     const chartData = await chartResponse.json();
-    
-    console.log('Chart data for', symbol, ':', JSON.stringify(chartData, null, 2));
     
     if (!chartData.chart || !chartData.chart.result || !chartData.chart.result[0]) {
       throw new Error('Invalid API response structure');
@@ -84,7 +95,13 @@ const fetchYahooQuote = async (symbol: string) => {
         dayHigh: meta.regularMarketDayHigh ?? currentPrice,
         dayLow: meta.regularMarketDayLow ?? currentPrice,
         volume: meta.regularMarketVolume ?? 0,
-        marketState: meta.marketState || 'CLOSED'
+        marketState: meta.marketState || 'CLOSED',
+        preMarketPrice: meta.preMarketPrice ?? 0,
+        preMarketChange: meta.preMarketChange ?? 0,
+        preMarketChangePercent: meta.preMarketChangePercent ?? 0,
+        postMarketPrice: meta.postMarketPrice ?? 0,
+        postMarketChange: meta.postMarketChange ?? 0,
+        postMarketChangePercent: meta.postMarketChangePercent ?? 0
       };
     }
     
@@ -104,7 +121,13 @@ const fetchYahooQuote = async (symbol: string) => {
       dayHigh: meta.regularMarketDayHigh ?? price,
       dayLow: meta.regularMarketDayLow ?? price,
       volume: meta.regularMarketVolume ?? 0,
-      marketState: meta.marketState || 'CLOSED'
+      marketState: meta.marketState || 'CLOSED',
+      preMarketPrice: meta.preMarketPrice ?? 0,
+      preMarketChange: meta.preMarketChange ?? 0,
+      preMarketChangePercent: meta.preMarketChangePercent ?? 0,
+      postMarketPrice: meta.postMarketPrice ?? 0,
+      postMarketChange: meta.postMarketChange ?? 0,
+      postMarketChangePercent: meta.postMarketChangePercent ?? 0
     };
     
   } catch (error) {
@@ -166,6 +189,12 @@ interface StockQuote {
   dayLow: number;
   volume: number;
   marketState: string;
+  preMarketPrice: number;
+  preMarketChange: number;
+  preMarketChangePercent: number;
+  postMarketPrice: number;
+  postMarketChange: number;
+  postMarketChangePercent: number;
 }
 
 interface SearchResult {
@@ -174,6 +203,9 @@ interface SearchResult {
   exchange: string;
   type: string;
 }
+
+const TTL_MS = 60 * 1000; // 1 minute TTL
+const quoteCache = React.useRef<{ [symbol: string]: { data: StockQuote, timestamp: number } }>({});
 
 export default function StocksPage() {
   const [quotes, setQuotes] = useState<Record<string, StockQuote>>({});
@@ -187,19 +219,30 @@ export default function StocksPage() {
     ...applePresetStocks.slice(0, 5)
   ]);
   const [showSearch, setShowSearch] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  const intervalRef = useRef<any>(null);
 
+  // Only use Yahoo for all price/session data
   const loadQuotes = async (symbols: string[] = watchlist) => {
     try {
+      const now = Date.now();
       const data: Record<string, StockQuote> = {};
-      
-      // Load quotes in parallel for better performance
       const promises = symbols.map(async (symbol) => {
+        // Check cache
+        if (
+          quoteCache.current[symbol] &&
+          now - quoteCache.current[symbol].timestamp < TTL_MS
+        ) {
+          data[symbol] = quoteCache.current[symbol].data;
+          return;
+        }
+        // Fetch from Yahoo if not cached or expired
         try {
           const quote = await fetchYahooQuote(symbol);
           data[symbol] = quote;
+          quoteCache.current[symbol] = { data: quote, timestamp: now };
         } catch (err) {
-          console.error(`Failed to load ${symbol}`, err);
-          // Create placeholder data for failed requests
+          // fallback or error handling as before
           data[symbol] = {
             symbol,
             name: symbol,
@@ -210,13 +253,19 @@ export default function StocksPage() {
             dayHigh: 0,
             dayLow: 0,
             volume: 0,
-            marketState: 'CLOSED'
+            marketState: 'CLOSED',
+            preMarketPrice: 0,
+            preMarketChange: 0,
+            preMarketChangePercent: 0,
+            postMarketPrice: 0,
+            postMarketChange: 0,
+            postMarketChangePercent: 0
           };
         }
       });
-
       await Promise.all(promises);
-      setQuotes(data);
+      setQuotes(prev => ({ ...prev, ...data }));
+      setLastUpdate(new Date());
     } catch (err) {
       console.error('Failed to load quotes', err);
       Alert.alert('Error', 'Failed to load stock data. Please try again.');
@@ -290,56 +339,114 @@ export default function StocksPage() {
     return num.toString();
   };
 
+  const formatTime = (date: Date) => {
+    return date.toLocaleTimeString('en-US', { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      hour12: true 
+    });
+  };
+
   const onRefresh = async () => {
+    quoteCache.current = {}; // Clear cache on manual refresh
     setRefreshing(true);
     await loadQuotes();
   };
 
+  // Auto-refresh every 5 seconds
   useEffect(() => {
     loadQuotes();
+    
+    // Set up interval for auto-refresh
+    intervalRef.current = setInterval(() => {
+      loadQuotes();
+    }, 5000); // 5 seconds
+
+    // Cleanup interval on unmount
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
-    const timeoutId = setTimeout(() => {
+    const timeoutId: any = setTimeout(() => {
       handleSearch(searchQuery);
     }, 300); // Debounce search
 
     return () => clearTimeout(timeoutId);
   }, [searchQuery]);
 
+  // Show after-hours/pre-market prices if available
+  const getCurrentPrice = (quote: StockQuote) => {
+    if (quote.marketState === 'POST' && quote.postMarketPrice) return quote.postMarketPrice;
+    if (quote.marketState === 'PRE' && quote.preMarketPrice) return quote.preMarketPrice;
+    return quote.price;
+  };
+  const getCurrentChange = (quote: StockQuote) => {
+    if (quote.marketState === 'POST' && quote.postMarketChange) return quote.postMarketChange;
+    if (quote.marketState === 'PRE' && quote.preMarketChange) return quote.preMarketChange;
+    return quote.change;
+  };
+  const getCurrentChangePercent = (quote: StockQuote) => {
+    if (quote.marketState === 'POST' && quote.postMarketChangePercent) return quote.postMarketChangePercent;
+    if (quote.marketState === 'PRE' && quote.preMarketChangePercent) return quote.preMarketChangePercent;
+    return quote.changePercent;
+  };
+
+  const getMarketStatus = (quote: StockQuote) => {
+    if (quote.marketState === 'REGULAR') {
+      return 'OPEN';
+    } else if (quote.marketState === 'PRE' || quote.marketState === 'PREPRE') {
+      return 'PM';
+    } else if (quote.marketState === 'POST' || quote.marketState === 'POSTPOST') {
+      return 'AH';
+    } else if (quote.marketState === 'CLOSED') {
+      return 'CLOSED';
+    }
+    return 'CLOSED';
+  };
+
   if (loading) {
     return (
-      <View className="flex-1 items-center justify-center bg-[#E1F5FE]">
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#E1F5FE' }}>
         <ActivityIndicator size="large" color="#0288D1" />
-        <Text className="mt-4 text-gray-600">Loading stocks...</Text>
+        <Text style={{ marginTop: 16, color: '#666' }}>Loading stocks...</Text>
       </View>
     );
   }
 
+  // In the UI, only render stocks in the watchlist that have a valid quote
   return (
     <ScrollView 
-      className="flex-1 bg-[#E1F5FE]"
+      style={{ flex: 1, backgroundColor: '#E1F5FE' }}
       refreshControl={
         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
       }
     >
-      <View className="px-4 py-6">
-        <View className="flex-row items-center justify-between mb-6">
-          <Text className="text-2xl font-bold text-black">Stocks</Text>
+      <View style={{ paddingHorizontal: 16, paddingVertical: 24 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+          <View>
+            <Text style={{ fontSize: 24, fontWeight: 'bold', color: 'black' }}>Stocks</Text>
+            <Text style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+              Last updated: {formatTime(lastUpdate)}
+            </Text>
+          </View>
           <TouchableOpacity 
             onPress={() => setShowSearch(!showSearch)}
-            className="bg-blue-500 px-4 py-2 rounded-lg"
+            style={{ backgroundColor: '#3B82F6', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 }}
           >
-            <Text className="text-white font-semibold">
+            <Text style={{ color: 'white', fontWeight: '600' }}>
               {showSearch ? 'Cancel' : 'Add Stock'}
             </Text>
           </TouchableOpacity>
         </View>
 
         {showSearch && (
-          <View className="mb-6">
+          <View style={{ marginBottom: 24 }}>
             <TextInput
-              className="bg-white rounded-lg px-4 py-3 text-black mb-4"
+              style={{ backgroundColor: 'white', borderRadius: 8, paddingHorizontal: 16, paddingVertical: 12, color: 'black', marginBottom: 16 }}
               placeholder="Search stocks... (e.g., AAPL, Tesla)"
               value={searchQuery}
               onChangeText={setSearchQuery}
@@ -347,25 +454,25 @@ export default function StocksPage() {
             />
             
             {searchLoading && (
-              <View className="items-center py-4">
+              <View style={{ alignItems: 'center', paddingVertical: 16 }}>
                 <ActivityIndicator size="small" color="#0288D1" />
               </View>
             )}
             
             {searchResults.length > 0 && (
-              <View className="bg-white rounded-lg max-h-60">
+              <View style={{ backgroundColor: 'white', borderRadius: 8, maxHeight: 240 }}>
                 <ScrollView>
                   {searchResults.map((stock, index) => (
                     <TouchableOpacity
                       key={`${stock.symbol}-${index}`}
                       onPress={() => addToWatchlist(stock.symbol)}
-                      className="p-4 border-b border-gray-200"
+                      style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: '#E5E7EB' }}
                     >
-                      <Text className="font-semibold text-black">{stock.symbol}</Text>
-                      <Text className="text-gray-600 text-sm" numberOfLines={1}>
+                      <Text style={{ fontWeight: '600', color: 'black' }}>{stock.symbol}</Text>
+                      <Text style={{ color: '#666', fontSize: 14 }} numberOfLines={1}>
                         {stock.name}
                       </Text>
-                      <Text className="text-gray-500 text-xs">{stock.exchange}</Text>
+                      <Text style={{ color: '#9CA3AF', fontSize: 12 }}>{stock.exchange}</Text>
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
@@ -374,8 +481,8 @@ export default function StocksPage() {
           </View>
         )}
 
-        <View className="mb-6">
-          <Text className="text-lg font-semibold text-black mb-3">
+        <View style={{ marginBottom: 24 }}>
+          <Text style={{ fontSize: 18, fontWeight: '600', color: 'black', marginBottom: 12 }}>
             Market Indices
           </Text>
           
@@ -383,37 +490,43 @@ export default function StocksPage() {
             const quote = quotes[index.symbol];
             if (!quote) return null;
             
-            const isPositive = quote.change >= 0;
-            const isMarketOpen = quote.marketState === 'REGULAR';
+            const currentPrice = getCurrentPrice(quote);
+            const currentChange = getCurrentChange(quote);
+            const currentChangePercent = getCurrentChangePercent(quote);
+            const isPositive = currentChange >= 0;
+            const marketStatus = getMarketStatus(quote);
             
             return (
-              <View key={index.symbol} className="bg-white rounded-xl p-4 mb-3 shadow">
-                <View className="flex-row items-center justify-between">
-                  <View className="flex-1">
-                    <View className="flex-row items-center">
-                      <Text className="text-lg font-semibold text-black">{index.name}</Text>
-                      {!isMarketOpen && (
-                        <View className="ml-2 bg-gray-200 px-2 py-1 rounded">
-                          <Text className="text-xs text-gray-600">CLOSED</Text>
-                        </View>
-                      )}
+              <View key={index.symbol} style={{ backgroundColor: 'white', borderRadius: 12, padding: 16, marginBottom: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 18, fontWeight: '600', color: 'black' }}>{index.name}</Text>
+                      <View style={{ marginLeft: 8, backgroundColor: marketStatus === 'OPEN' ? '#10B981' : marketStatus === 'PM' ? '#F59E0B' : marketStatus === 'AH' ? '#8B5CF6' : '#9CA3AF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 }}>
+                        <Text style={{ fontSize: 10, color: 'white', fontWeight: '600' }}>{marketStatus}</Text>
+                      </View>
                     </View>
-                    <Text className="text-sm text-gray-600 mb-1">{index.symbol}</Text>
-                    <Text className="text-2xl font-bold text-black">
-                      {formatPrice(quote.price)}
+                    <Text style={{ fontSize: 14, color: '#666', marginBottom: 4 }}>{index.symbol}</Text>
+                    <Text style={{ fontSize: 24, fontWeight: 'bold', color: 'black' }}>
+                      {formatPrice(currentPrice)}
                     </Text>
-                    <Text className={`text-sm font-medium ${
-                      isPositive ? 'text-green-600' : 'text-red-600'
-                    }`}>
-                      {isPositive ? '+' : ''}{quote.change.toFixed(2)} ({quote.changePercent.toFixed(2)}%)
+                    <Text style={{ fontSize: 14, fontWeight: '500', color: isPositive ? '#10B981' : '#EF4444' }}>
+                      {isPositive ? '+' : ''}{currentChange.toFixed(2)} ({currentChangePercent.toFixed(2)}%)
                     </Text>
+                    {/* Show extended hours data if available */}
+                    {(quote.postMarketPrice > 0 || quote.preMarketPrice > 0) && (
+                      <Text style={{ fontSize: 12, color: '#8B5CF6', marginTop: 2 }}>
+                        {quote.postMarketPrice > 0 ? `AH: $${formatPrice(quote.postMarketPrice)}` : ''}
+                        {quote.preMarketPrice > 0 ? `PM: $${formatPrice(quote.preMarketPrice)}` : ''}
+                      </Text>
+                    )}
                   </View>
                   
-                  <View className="items-end">
-                    <Text className="text-gray-600 text-sm">
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={{ color: '#666', fontSize: 14 }}>
                       H: {formatPrice(quote.dayHigh)}
                     </Text>
-                    <Text className="text-gray-600 text-sm">
+                    <Text style={{ color: '#666', fontSize: 14 }}>
                       L: {formatPrice(quote.dayLow)}
                     </Text>
                   </View>
@@ -423,8 +536,8 @@ export default function StocksPage() {
           })}
         </View>
 
-        <View className="mb-4">
-          <Text className="text-lg font-semibold text-black mb-3">
+        <View style={{ marginBottom: 16 }}>
+          <Text style={{ fontSize: 18, fontWeight: '600', color: 'black', marginBottom: 12 }}>
             My Watchlist ({watchlist.length - marketIndices.length})
           </Text>
           
@@ -432,42 +545,48 @@ export default function StocksPage() {
             const quote = quotes[symbol];
             if (!quote) return null;
             
-            const isPositive = quote.change >= 0;
-            const isMarketOpen = quote.marketState === 'REGULAR';
+            const currentPrice = getCurrentPrice(quote);
+            const currentChange = getCurrentChange(quote);
+            const currentChangePercent = getCurrentChangePercent(quote);
+            const isPositive = currentChange >= 0;
+            const marketStatus = getMarketStatus(quote);
             
             return (
-              <View key={symbol} className="bg-white rounded-xl p-4 mb-4 shadow">
-                <View className="flex-row items-center justify-between">
-                  <View className="flex-1">
-                    <View className="flex-row items-center">
-                      <Text className="text-xl font-semibold text-black">{symbol}</Text>
-                      {!isMarketOpen && (
-                        <View className="ml-2 bg-gray-200 px-2 py-1 rounded">
-                          <Text className="text-xs text-gray-600">CLOSED</Text>
-                        </View>
-                      )}
+              <View key={symbol} style={{ backgroundColor: 'white', borderRadius: 12, padding: 16, marginBottom: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 20, fontWeight: '600', color: 'black' }}>{symbol}</Text>
+                      <View style={{ marginLeft: 8, backgroundColor: marketStatus === 'OPEN' ? '#10B981' : marketStatus === 'PM' ? '#F59E0B' : marketStatus === 'AH' ? '#8B5CF6' : '#9CA3AF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 }}>
+                        <Text style={{ fontSize: 10, color: 'white', fontWeight: '600' }}>{marketStatus}</Text>
+                      </View>
                     </View>
-                    <Text className="text-sm text-gray-600 mb-1" numberOfLines={1}>
+                    <Text style={{ fontSize: 14, color: '#666', marginBottom: 4 }} numberOfLines={1}>
                       {quote.name}
                     </Text>
-                    <Text className="text-2xl font-bold text-black">
-                      ${formatPrice(quote.price)}
+                    <Text style={{ fontSize: 24, fontWeight: 'bold', color: 'black' }}>
+                      ${formatPrice(currentPrice)}
                     </Text>
-                    <Text className={`text-sm font-medium ${
-                      isPositive ? 'text-green-600' : 'text-red-600'
-                    }`}>
-                      {isPositive ? '+' : ''}${quote.change.toFixed(2)} ({quote.changePercent.toFixed(2)}%)
+                    <Text style={{ fontSize: 14, fontWeight: '500', color: isPositive ? '#10B981' : '#EF4444' }}>
+                      {isPositive ? '+' : ''}${currentChange.toFixed(2)} ({currentChangePercent.toFixed(2)}%)
                     </Text>
-                    <Text className="text-gray-600 text-sm mt-1">
+                    {/* Show extended hours data if available */}
+                    {(quote.postMarketPrice > 0 || quote.preMarketPrice > 0) && (
+                      <Text style={{ fontSize: 12, color: '#8B5CF6', marginTop: 2 }}>
+                        {quote.postMarketPrice > 0 ? `AH: $${formatPrice(quote.postMarketPrice)}` : ''}
+                        {quote.preMarketPrice > 0 ? `PM: $${formatPrice(quote.preMarketPrice)}` : ''}
+                      </Text>
+                    )}
+                    <Text style={{ color: '#666', fontSize: 14, marginTop: 4 }}>
                       H: ${formatPrice(quote.dayHigh)} | L: ${formatPrice(quote.dayLow)} | Vol: {formatLargeNumber(quote.volume)}
                     </Text>
                   </View>
                   
                   <TouchableOpacity
                     onPress={() => removeFromWatchlist(symbol)}
-                    className="bg-red-100 p-2 rounded-full"
+                    style={{ backgroundColor: '#FEE2E2', padding: 8, borderRadius: 20 }}
                   >
-                    <Text className="text-red-600 font-bold">✕</Text>
+                    <Text style={{ color: '#DC2626', fontWeight: 'bold' }}>✕</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -475,8 +594,8 @@ export default function StocksPage() {
           })}
         </View>
 
-        <View className="mb-4">
-          <Text className="text-lg font-semibold text-black mb-3">
+        <View style={{ marginBottom: 50 }}>
+          <Text style={{ fontSize: 18, fontWeight: '600', color: 'black', marginBottom: 12 }}>
             Popular Stocks
           </Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -484,10 +603,10 @@ export default function StocksPage() {
               <TouchableOpacity
                 key={symbol}
                 onPress={() => addToWatchlist(symbol)}
-                className="bg-white rounded-lg p-3 mr-3 min-w-[80px] items-center"
+                style={{ backgroundColor: 'white', borderRadius: 8, padding: 12, marginRight: 12, minWidth: 80, alignItems: 'center' }}
               >
-                <Text className="font-semibold text-black text-sm">{symbol}</Text>
-                <Text className="text-blue-500 text-xs mt-1">+ Add</Text>
+                <Text style={{ fontWeight: '600', color: 'black', fontSize: 14 }}>{symbol}</Text>
+                <Text style={{ color: '#3B82F6', fontSize: 12, marginTop: 4 }}>+ Add</Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
