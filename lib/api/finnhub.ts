@@ -7,3 +7,10 @@ export async function fetchStockQuote(symbol: string) {
   if (!res.ok) throw new Error('Failed to fetch stock quote');
   return res.json();
 }
+export const searchStocks = async (query: string) => {
+  const response = await fetch(
+    `https://finnhub.io/api/v1/search?q=${encodeURIComponent(query)}&token=${API_KEY}`
+  );
+  const data = await response.json();
+  return data.result || [];
+};

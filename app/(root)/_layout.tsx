@@ -43,19 +43,6 @@ export default function Layout() {
               }}
             />
             <Tabs.Screen 
-              name="stocks"
-              options={{
-                title: "Stocks",
-                headerShown: false,
-                tabBarIcon: ({ focused }) => (
-                  <View className="items-center justify-center w-[180%] mt-5 h-[80%]">
-                    <Ionicons name="cellular-outline" size={22} color={focused ? '#2A52BE' : '#A8B5DB'} />
-                    <Text style={{ color: focused ? '#2A52BE' : '#A8B5DB', fontSize: 12, marginTop: 5 }}>Stocks</Text>
-                  </View>
-                )
-              }}
-            />
-            <Tabs.Screen 
               name="watchlist"
               options={{
                 title: "Watchlist",
