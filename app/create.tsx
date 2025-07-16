@@ -1,18 +1,17 @@
+import { getColors } from "@/constants/colors";
 import { useUser } from "@clerk/clerk-expo";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Alert,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
+    useColorScheme
 } from "react-native";
-import { styles } from "../assets/styles/create.styles";
 import { API_URL } from "../constants/api";
-import { COLORS } from "../constants/colors";
 
 const CATEGORIES = [
   { id: "food", name: "Food & Drinks", icon: "restaurant-outline" },
@@ -27,6 +26,8 @@ const CATEGORIES = [
 const CreateScreen = () => {
   const router = useRouter();
   const { user } = useUser();
+  const colorScheme = useColorScheme();
+  const colors = getColors(colorScheme);
 
   const [title, setTitle] = useState("");
   const [amount, setAmount] = useState("");
@@ -101,65 +102,132 @@ const CreateScreen = () => {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
       {/* HEADER */}
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={24} color={COLORS.text} />
+      <View style={{ 
+        flexDirection: "row", 
+        alignItems: "center", 
+        justifyContent: "space-between", 
+        paddingHorizontal: 20, 
+        paddingVertical: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: colors.border,
+      }}>
+        <TouchableOpacity style={{ padding: 8 }} onPress={() => router.back()}>
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>New Transaction</Text>
+        <Text style={{ fontSize: 18, fontWeight: "600", color: colors.text }}>New Transaction</Text>
         <TouchableOpacity
-          style={[styles.saveButtonContainer, isLoading && styles.saveButtonDisabled]}
+          style={{ 
+            flexDirection: "row", 
+            alignItems: "center", 
+            paddingHorizontal: 16, 
+            paddingVertical: 8,
+            borderRadius: 20,
+            backgroundColor: isLoading ? colors.border : colors.primary,
+            opacity: isLoading ? 0.6 : 1,
+          }}
           onPress={handleCreate}
           disabled={isLoading}
         >
-          <Text style={styles.saveButton}>{isLoading ? "Saving..." : "Save"}</Text>
-          {!isLoading && <Ionicons name="checkmark" size={18} color={COLORS.primary} />}
+          <Text style={{ color: colors.white, fontWeight: "600", marginRight: 4 }}>
+            {isLoading ? "Saving..." : "Save"}
+          </Text>
+          {!isLoading && <Ionicons name="checkmark" size={18} color={colors.white} />}
         </TouchableOpacity>
       </View>
 
-      <View style={styles.card}>
-        <View style={styles.typeSelector}>
+      <View style={{ 
+        backgroundColor: colors.card, 
+        margin: 20, 
+        borderRadius: 16, 
+        padding: 20,
+        shadowColor: colors.shadow,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
+      }}>
+        <View style={{ flexDirection: "row", marginBottom: 24 }}>
           {/* EXPENSE SELECTOR */}
           <TouchableOpacity
-            style={[styles.typeButton, isExpense && styles.typeButtonActive]}
+            style={{ 
+              flex: 1, 
+              flexDirection: "row", 
+              alignItems: "center", 
+              justifyContent: "center", 
+              paddingVertical: 12, 
+              paddingHorizontal: 16, 
+              borderRadius: 12, 
+              marginRight: 8,
+              backgroundColor: isExpense ? colors.expense : colors.background,
+            }}
             onPress={() => setIsExpense(true)}
           >
             <Ionicons
               name="arrow-down-circle"
               size={22}
-              color={isExpense ? COLORS.white : COLORS.expense}
-              style={styles.typeIcon}
+              color={isExpense ? colors.white : colors.expense}
+              style={{ marginRight: 8 }}
             />
-            <Text style={[styles.typeButtonText, isExpense && styles.typeButtonTextActive]}>
+            <Text style={{ 
+              fontWeight: "600", 
+              color: isExpense ? colors.white : colors.expense 
+            }}>
               Expense
             </Text>
           </TouchableOpacity>
 
           {/* INCOME SELECTOR */}
           <TouchableOpacity
-            style={[styles.typeButton, !isExpense && styles.typeButtonActive]}
+            style={{ 
+              flex: 1, 
+              flexDirection: "row", 
+              alignItems: "center", 
+              justifyContent: "center", 
+              paddingVertical: 12, 
+              paddingHorizontal: 16, 
+              borderRadius: 12, 
+              marginLeft: 8,
+              backgroundColor: !isExpense ? colors.income : colors.background,
+            }}
             onPress={() => setIsExpense(false)}
           >
             <Ionicons
               name="arrow-up-circle"
               size={22}
-              color={!isExpense ? COLORS.white : COLORS.income}
-              style={styles.typeIcon}
+              color={!isExpense ? colors.white : colors.income}
+              style={{ marginRight: 8 }}
             />
-            <Text style={[styles.typeButtonText, !isExpense && styles.typeButtonTextActive]}>
+            <Text style={{ 
+              fontWeight: "600", 
+              color: !isExpense ? colors.white : colors.income 
+            }}>
               Income
             </Text>
           </TouchableOpacity>
         </View>
 
         {/* AMOUNT CONTAINER */}
-        <View style={styles.amountContainer}>
-          <Text style={styles.currencySymbol}>$</Text>
+        <View style={{ 
+          flexDirection: "row", 
+          alignItems: "center", 
+          marginBottom: 24, 
+          paddingHorizontal: 16, 
+          paddingVertical: 12, 
+          backgroundColor: colors.background, 
+          borderRadius: 12 
+        }}>
+          <Text style={{ fontSize: 24, fontWeight: "600", color: colors.text, marginRight: 8 }}>$</Text>
           <TextInput
-            style={styles.amountInput}
+            style={{ 
+              flex: 1, 
+              fontSize: 24, 
+              fontWeight: "600", 
+              color: colors.text 
+            }}
             placeholder="0.00"
-            placeholderTextColor={COLORS.textLight}
+            placeholderTextColor={colors.textLight}
             value={amount}
             onChangeText={setAmount}
             keyboardType="numeric"
@@ -167,61 +235,80 @@ const CreateScreen = () => {
         </View>
 
         {/* INPUT CONTAINER */}
-        <View style={styles.inputContainer}>
+        <View style={{ 
+          flexDirection: "row", 
+          alignItems: "center", 
+          marginBottom: 24, 
+          paddingHorizontal: 16, 
+          paddingVertical: 12, 
+          backgroundColor: colors.background, 
+          borderRadius: 12 
+        }}>
           <Ionicons
             name="create-outline"
             size={22}
-            color={COLORS.textLight}
-            style={styles.inputIcon}
+            color={colors.textLight}
+            style={{ marginRight: 12 }}
           />
           <TextInput
-            style={styles.input}
+            style={{ 
+              flex: 1, 
+              fontSize: 16, 
+              color: colors.text 
+            }}
             placeholder="Transaction Title"
-            placeholderTextColor={COLORS.textLight}
+            placeholderTextColor={colors.textLight}
             value={title}
             onChangeText={setTitle}
           />
         </View>
 
         {/* TITLE */}
-        <Text style={styles.sectionTitle}>
-          <Ionicons name="pricetag-outline" size={16} color={COLORS.text} /> Category
+        <Text style={{ 
+          fontSize: 16, 
+          fontWeight: "600", 
+          color: colors.text, 
+          marginBottom: 16,
+          flexDirection: "row",
+          alignItems: "center",
+        }}>
+          <Ionicons name="pricetag-outline" size={16} color={colors.text} style={{ marginRight: 8 }} /> 
+          Category
         </Text>
 
-        <View style={styles.categoryGrid}>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" }}>
           {CATEGORIES.map((category) => (
             <TouchableOpacity
               key={category.id}
-              style={[
-                styles.categoryButton,
-                selectedCategory === category.name && styles.categoryButtonActive,
-              ]}
+              style={{ 
+                width: "48%", 
+                flexDirection: "row", 
+                alignItems: "center", 
+                paddingVertical: 12, 
+                paddingHorizontal: 16, 
+                borderRadius: 12, 
+                marginBottom: 12,
+                backgroundColor: selectedCategory === category.name ? colors.primary : colors.background,
+              }}
               onPress={() => setSelectedCategory(category.name)}
             >
               <Ionicons
                 name={category.icon as any}
                 size={20}
-                color={selectedCategory === category.name ? COLORS.white : COLORS.text}
-                style={styles.categoryIcon}
+                color={selectedCategory === category.name ? colors.white : colors.textLight}
+                style={{ marginRight: 12 }}
               />
-              <Text
-                style={[
-                  styles.categoryButtonText,
-                  selectedCategory === category.name && styles.categoryButtonTextActive,
-                ]}
-              >
+              <Text style={{ 
+                fontSize: 14, 
+                fontWeight: "500", 
+                color: selectedCategory === category.name ? colors.white : colors.text 
+              }}>
                 {category.name}
               </Text>
             </TouchableOpacity>
           ))}
         </View>
       </View>
-
-      {isLoading && (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
-        </View>
-      )}
     </View>
   );
 };

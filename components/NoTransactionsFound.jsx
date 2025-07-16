@@ -1,27 +1,55 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Text, TouchableOpacity, View } from "react-native";
-import { styles } from "../assets/styles/home.styles";
-import { COLORS } from "../constants/colors";
 import { useRouter } from "expo-router";
+import { Text, TouchableOpacity, View } from "react-native";
 
-const NoTransactionsFound = () => {
+const NoTransactionsFound = ({ colors }) => {
   const router = useRouter();
 
   return (
-    <View style={styles.emptyState}>
+    <View style={{
+      backgroundColor: colors.card,
+      borderRadius: 16,
+      padding: 30,
+      alignItems: "center",
+      justifyContent: "center",
+      marginTop: 10,
+      shadowColor: colors.shadow,
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.1,
+      shadowRadius: 2,
+      elevation: 2,
+    }}>
       <Ionicons
         name="receipt-outline"
         size={60}
-        color={COLORS.textLight}
-        style={styles.emptyStateIcon}
+        color={colors.textLight}
+        style={{ marginBottom: 16 }}
       />
-      <Text style={styles.emptyStateTitle}>No transactions yet</Text>
-      <Text style={styles.emptyStateText}>
+      <Text style={{ fontSize: 18, fontWeight: "600", color: colors.text, marginBottom: 8 }}>No transactions yet</Text>
+      <Text style={{
+        color: colors.textLight,
+        fontSize: 14,
+        textAlign: "center",
+        marginBottom: 20,
+        lineHeight: 20,
+      }}>
         Start tracking your finances by adding your first transaction
       </Text>
-      <TouchableOpacity style={styles.emptyStateButton} onPress={() => router.push("/create")}>
-        <Ionicons name="add-circle" size={18} color={COLORS.white} />
-        <Text style={styles.emptyStateButtonText}>Add Transaction</Text>
+      <TouchableOpacity style={{
+        backgroundColor: colors.primary,
+        flexDirection: "row",
+        alignItems: "center",
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        borderRadius: 20,
+        shadowColor: colors.shadow,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 3,
+        elevation: 2,
+      }} onPress={() => router.push("/create")}>
+        <Ionicons name="add-circle" size={18} color={colors.white} />
+        <Text style={{ color: colors.white, fontWeight: "600", marginLeft: 6 }}>Add Transaction</Text>
       </TouchableOpacity>
     </View>
   );

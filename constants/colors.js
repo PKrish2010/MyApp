@@ -58,5 +58,45 @@ export const THEMES = {
   ocean: oceanTheme,
 };
 
-// 👇 change this to switch theme
+// Add app-wide light and dark theme objects for useColorScheme
+export const lightTheme = {
+  background: '#F8FAFC',
+  card: 'white',
+  text: '#1F2937',
+  subtext: '#6B7280',
+  border: '#E5E7EB',
+  positive: '#10B981',
+  negative: '#EF4444',
+  accent: '#3B82F6',
+  shadow: '#00000010',
+  primary: '#0277BD',
+  white: '#FFFFFF',
+  textLight: '#6B7280',
+  expense: '#EF5350',
+  income: '#26A69A',
+};
+
+export const darkTheme = {
+  background: '#000000',
+  card: '#1A222B',
+  text: '#F3F4F6',
+  subtext: '#A0AEC0',
+  border: '#232B36',
+  positive: '#10B981',
+  negative: '#EF4444',
+  accent: '#3B82F6',
+  shadow: '#00000040',
+  primary: '#0277BD',
+  white: '#FFFFFF',
+  textLight: '#A0AEC0',
+  expense: '#EF5350',
+  income: '#26A69A',
+};
+
+// Function to get colors based on color scheme
+export const getColors = (colorScheme) => {
+  return colorScheme === 'dark' ? darkTheme : lightTheme;
+};
+
+// 👇 change this to switch theme - keeping for backward compatibility
 export const COLORS = THEMES.ocean;

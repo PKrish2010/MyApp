@@ -1,11 +1,8 @@
 import { useClerk } from "@clerk/clerk-expo";
-import * as Linking from "expo-linking";
-import { Alert, Text, TouchableOpacity } from "react-native";
-import { styles } from "../assets/styles/home.styles";
 import { Ionicons } from "@expo/vector-icons";
-import { COLORS } from "../constants/colors";
+import { Alert, TouchableOpacity } from "react-native";
 
-export const SignOutButton = () => {
+export const SignOutButton = ({ colors }) => {
   // Use `useClerk()` to access the `signOut()` function
   const { signOut } = useClerk();
 
@@ -17,8 +14,17 @@ export const SignOutButton = () => {
   };
 
   return (
-    <TouchableOpacity style={styles.logoutButton} onPress={handleSignOut}>
-      <Ionicons name="log-out-outline" size={22} color={COLORS.text} />
+    <TouchableOpacity style={{
+      padding: 10,
+      borderRadius: 20,
+      backgroundColor: colors.card,
+      shadowColor: colors.shadow,
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.05,
+      shadowRadius: 2,
+      elevation: 1,
+    }} onPress={handleSignOut}>
+      <Ionicons name="log-out-outline" size={22} color={colors.text} />
     </TouchableOpacity>
   );
 };
