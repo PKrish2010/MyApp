@@ -5,6 +5,7 @@ import { tokenCache } from "@clerk/clerk-expo/token-cache";
 import { Slot, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useColorScheme, View } from "react-native";
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import './globals.css';
 
 export default function RootLayout() {
@@ -17,18 +18,21 @@ export default function RootLayout() {
 
   return (
     <ClerkProvider tokenCache={tokenCache}>
-      <SafeScreen colors={colors}>
-        <View style={{ flex: 1, backgroundColor: colors.background }}>
-          {/* Content takes flex 1 to fill the screen */}
-          <View style={{ flex: 1 }}>
-            <Slot />
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <SafeScreen colors={colors}>
+          <View style={{ flex: 1, backgroundColor: colors.background }}>
+            {/* Content takes flex 1 to fill the screen */}
+            <View style={{ flex: 1 }}>
+              <Slot />
+            </View>
+            {/* Nav bar stays fixed at bottom */}
+            {/* {true && <FinanceNavBar />} */}
           </View>
-          {/* Nav bar stays fixed at bottom */}
-          {/* {true && <FinanceNavBar />} */}
-        </View>
-      </SafeScreen>
-      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+        </SafeScreen>
+        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+      </GestureHandlerRootView>
     </ClerkProvider>
   );
 }
+
 

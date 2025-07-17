@@ -1,10 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useIsFocused } from '@react-navigation/native';
+import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Animated,
+  AppState,
+  Modal,
   RefreshControl,
   ScrollView,
   Text,
@@ -13,13 +18,17 @@ import {
   View,
   useColorScheme
 } from 'react-native';
+import DraggableFlatList from 'react-native-draggable-flatlist';
+import { Swipeable } from 'react-native-gesture-handler';
+
+// Cleaned: No Alpha Vantage code, no unused variables, no commented-out legacy code.
 
 // Yahoo Finance API functions
 const fetchYahooQuote = async (symbol: string) => {
   try {
     // Try the quote endpoint first - it's more reliable for current data
     const quoteResponse = await fetch(
-      `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}&fields=regularMarketPrice,regularMarketChange,regularMarketChangePercent,regularMarketPreviousClose,regularMarketDayHigh,regularMarketDayLow,regularMarketVolume,shortName,longName,marketState,preMarketPrice,preMarketChange,preMarketChangePercent,postMarketPrice,postMarketChange,postMarketChangePercent`
+      `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}&fields=regularMarketPrice,regularMarketChange,regularMarketChangePercent,regularMarketPreviousClose,regularMarketDayHigh,regularMarketDayLow,regularMarketVolume,shortName,longName,marketState,preMarketPrice,preMarketChange,preMarketChangePercent,postMarketPrice,postMarketChange,postMarketChangePercent,quoteType`
     );
     
     if (quoteResponse.ok) {
@@ -59,7 +68,9 @@ const fetchYahooQuote = async (symbol: string) => {
           preMarketChangePercent: preMarketChangePercent,
           postMarketPrice: postMarketPrice,
           postMarketChange: postMarketChange,
-          postMarketChangePercent: postMarketChangePercent
+          postMarketChangePercent: postMarketChangePercent,
+          // Market type detection
+          quoteType: quote.quoteType || 'EQUITY',
         };
       }
     }
@@ -105,7 +116,8 @@ const fetchYahooQuote = async (symbol: string) => {
         preMarketChangePercent: meta.preMarketChangePercent ?? 0,
         postMarketPrice: meta.postMarketPrice ?? 0,
         postMarketChange: meta.postMarketChange ?? 0,
-        postMarketChangePercent: meta.postMarketChangePercent ?? 0
+        postMarketChangePercent: meta.postMarketChangePercent ?? 0,
+        quoteType: meta.quoteType || 'EQUITY'
       };
     }
     
@@ -131,7 +143,8 @@ const fetchYahooQuote = async (symbol: string) => {
       preMarketChangePercent: meta.preMarketChangePercent ?? 0,
       postMarketPrice: meta.postMarketPrice ?? 0,
       postMarketChange: meta.postMarketChange ?? 0,
-      postMarketChangePercent: meta.postMarketChangePercent ?? 0
+      postMarketChangePercent: meta.postMarketChangePercent ?? 0,
+      quoteType: meta.quoteType || 'EQUITY'
     };
     
   } catch (error) {
@@ -213,6 +226,7 @@ interface StockQuote {
   postMarketPrice: number;
   postMarketChange: number;
   postMarketChangePercent: number;
+  quoteType: string;
 }
 
 interface SearchResult {
@@ -270,10 +284,12 @@ export default function StocksPage() {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [watchlist, setWatchlist] = useState<string[]>([
+  // Change watchlist initialization
+  const defaultWatchlist = [
     ...marketIndices.map(index => index.symbol),
     ...applePresetStocks.slice(0, 5)
-  ]);
+  ];
+  const [watchlist, setWatchlist] = useState<string[] | null>(null);
   const [showSearch, setShowSearch] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const intervalRef = useRef<any>(null);
@@ -283,82 +299,94 @@ export default function StocksPage() {
   const [pendingRemoval, setPendingRemoval] = useState<string[]>([]);
   const [marketStatusDisplay, setMarketStatusDisplay] = useState<{text: string, color: string}>({text: '', color: SESSION_COLORS['closed']});
   const quoteCache = React.useRef<{ [symbol: string]: { data: StockQuote, timestamp: number } }>({});
+  const scrollViewRef = useRef<ScrollView>(null);
+  const scrollOffsetRef = useRef(0);
+  const isFocused = useIsFocused();
+  const [priceHighlights, setPriceHighlights] = useState<Record<string, { color: string; timeout: ReturnType<typeof setTimeout> | null }>>({});
+  const lastPrices = useRef<Record<string, number>>({});
+  const [removingItems, setRemovingItems] = useState<Set<string>>(new Set());
+  const swipeableRefs = useRef<{ [key: string]: Swipeable | null }>({});
+  const [removalAnims, setRemovalAnims] = useState<Record<string, Animated.Value>>( {} );
+  const cryptoScrollRef = useRef<ScrollView>(null);
+  const stocksScrollRef = useRef<ScrollView>(null);
+  const [showReorderModal, setShowReorderModal] = useState(false);
+  const [reorderWatchlist, setReorderWatchlist] = useState<string[]>([]);
+
+
+
+  // Load watchlist from AsyncStorage on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const stored = await AsyncStorage.getItem('watchlist');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          setWatchlist(parsed);
+          loadQuotes(parsed);
+        } else {
+          setWatchlist(defaultWatchlist);
+          loadQuotes(defaultWatchlist);
+        }
+      } catch (e) {
+        console.error('Failed to load watchlist from storage', e);
+        setWatchlist(defaultWatchlist);
+        loadQuotes(defaultWatchlist);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Save watchlist to AsyncStorage whenever it changes
+  useEffect(() => {
+    if (watchlist) {
+      AsyncStorage.setItem('watchlist', JSON.stringify(watchlist)).catch(e => {
+        console.error('Failed to save watchlist to storage', e);
+      });
+    }
+  }, [watchlist]);
 
   // Only use Yahoo for all price/session data
-  const loadQuotes = async (symbols: string[] = watchlist) => {
+  const loadQuotes = async (symbols: string[] = watchlist ?? []) => {
     try {
       const now = Date.now();
       const data: Record<string, StockQuote> = {};
-      // Try Python FastAPI server first
-      try {
-        const res = await fetch(`http://localhost:8000/quotes?symbols=${symbols.join(',')}`);
-        if (!res.ok) throw new Error('Python API error');
-        const results = await res.json();
-        console.log('API results:', results); // Debug: see what fields are present
-        results.forEach((q: any) => {
-          // Compute change and percent if not present
-          const price = q.regularMarketPrice ?? 0;
-          const previousClose = q.regularMarketPreviousClose ?? 0;
-          const change = q.regularMarketChange ?? (price - previousClose);
-          const changePercent = q.regularMarketChangePercent ?? (previousClose ? ((price - previousClose) / previousClose) * 100 : 0);
-          data[q.symbol] = {
-            symbol: q.symbol,
-            name: q.longName || q.shortName || q.symbol,
-            price,
-            change,
-            changePercent,
-            previousClose,
-            dayHigh: q.regularMarketDayHigh ?? 0,
-            dayLow: q.regularMarketDayLow ?? 0,
-            volume: q.regularMarketVolume ?? 0,
-            marketState: q.marketState || 'CLOSED',
-            preMarketPrice: q.preMarketPrice ?? 0,
-            preMarketChange: q.preMarketChange ?? 0,
-            preMarketChangePercent: q.preMarketChangePercent ?? 0,
-            postMarketPrice: q.postMarketPrice ?? 0,
-            postMarketChange: q.postMarketChange ?? 0,
-            postMarketChangePercent: q.postMarketChangePercent ?? 0
+      // Remove Python FastAPI server code, use only Yahoo
+      const promises = symbols.map(async (symbol) => {
+        // Check cache
+        if (
+          quoteCache.current[symbol] &&
+          now - quoteCache.current[symbol].timestamp < TTL_MS
+        ) {
+          data[symbol] = quoteCache.current[symbol].data;
+          return;
+        }
+        try {
+          const quote = await fetchYahooQuote(symbol);
+          data[symbol] = quote;
+          quoteCache.current[symbol] = { data: quote, timestamp: now };
+        } catch (err) {
+          data[symbol] = {
+            symbol,
+            name: symbol,
+            price: 0,
+            change: 0,
+            changePercent: 0,
+            previousClose: 0,
+            dayHigh: 0,
+            dayLow: 0,
+            volume: 0,
+            marketState: 'CLOSED',
+            preMarketPrice: 0,
+            preMarketChange: 0,
+            preMarketChangePercent: 0,
+            postMarketPrice: 0,
+            postMarketChange: 0,
+            postMarketChangePercent: 0,
+            quoteType: 'EQUITY' // Default to EQUITY if quoteType is not available
           };
-          quoteCache.current[q.symbol] = { data: data[q.symbol], timestamp: now };
-        });
-      } catch (err) {
-        // Fallback to Yahoo if Python server fails
-        const promises = symbols.map(async (symbol) => {
-          // Check cache
-          if (
-            quoteCache.current[symbol] &&
-            now - quoteCache.current[symbol].timestamp < TTL_MS
-          ) {
-            data[symbol] = quoteCache.current[symbol].data;
-            return;
-          }
-          try {
-            const quote = await fetchYahooQuote(symbol);
-            data[symbol] = quote;
-            quoteCache.current[symbol] = { data: quote, timestamp: now };
-          } catch (err) {
-            data[symbol] = {
-              symbol,
-              name: symbol,
-              price: 0,
-              change: 0,
-              changePercent: 0,
-              previousClose: 0,
-              dayHigh: 0,
-              dayLow: 0,
-              volume: 0,
-              marketState: 'CLOSED',
-              preMarketPrice: 0,
-              preMarketChange: 0,
-              preMarketChangePercent: 0,
-              postMarketPrice: 0,
-              postMarketChange: 0,
-              postMarketChangePercent: 0
-            };
-          }
-        });
-        await Promise.all(promises);
-      }
+        }
+      });
+      await Promise.all(promises);
       setQuotes(prev => ({ ...prev, ...data }));
       setLastUpdate(new Date());
     } catch (err) {
@@ -388,29 +416,103 @@ export default function StocksPage() {
     }
   };
 
-  const addToWatchlist = (symbol: string) => {
-    if (!watchlist.includes(symbol)) {
-      const newWatchlist = [...watchlist, symbol];
-      setWatchlist(newWatchlist);
-      
-      // Load quote for new symbol
+  // Replace addToWatchlist with async version
+  const addToWatchlist = async (symbol: string) => {
+    if (!watchlist || watchlist.includes(symbol)) return;
+    const newWatchlist = [...watchlist, symbol];
+    setWatchlist(newWatchlist);
+    try {
+      await AsyncStorage.setItem('watchlist', JSON.stringify(newWatchlist));
+      console.log('Watchlist saved:', newWatchlist);
       fetchYahooQuote(symbol)
         .then(quote => {
           setQuotes(prev => ({ ...prev, [symbol]: quote }));
         })
         .catch(err => console.error(`Failed to load ${symbol}`, err));
+    } catch (e) {
+      console.error('Failed to save watchlist to storage', e);
+      Alert.alert('Error', 'Failed to save stock to watchlist. Please try again.');
     }
     setShowSearch(false);
     setSearchQuery('');
     setSearchResults([]);
   };
 
+  // Replace addToWatchlistWithCheck to await addToWatchlist
+  const addToWatchlistWithCheck = (symbol: string, isSearch = false) => {
+    if (!watchlist) return;
+    setJustAdded(symbol);
+    if (!isSearch) setPendingRemoval((prev) => [...prev, symbol]);
+    if (!checkmarkAnims.current[symbol]) {
+      checkmarkAnims.current[symbol] = new Animated.Value(0);
+    }
+    const anim = checkmarkAnims.current[symbol];
+    anim.setValue(0);
+    Animated.timing(anim, {
+      toValue: 1,
+      duration: 300,
+      useNativeDriver: true,
+    }).start(() => {
+      setTimeout(() => {
+        Animated.timing(anim, {
+          toValue: 0,
+          duration: 300,
+          useNativeDriver: true,
+        }).start(async () => {
+          setJustAdded(null);
+          await addToWatchlist(symbol);
+          if (!isSearch) setPendingRemoval((prev) => prev.filter((s) => s !== symbol));
+        });
+      }, 700);
+    });
+  };
+
   const removeFromWatchlist = (symbol: string) => {
-    setWatchlist(prev => prev.filter(s => s !== symbol));
-    setQuotes(prev => {
-      const newQuotes = { ...prev };
-      delete newQuotes[symbol];
-      return newQuotes;
+    if (!watchlist) return;
+    
+    // Add haptic feedback
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    
+    // Mark item as removing
+    setRemovingItems(prev => new Set(prev).add(symbol));
+    
+    // Close the swipeable
+    if (swipeableRefs.current[symbol]) {
+      swipeableRefs.current[symbol]?.close();
+    }
+    
+    // Delay removal for smooth animation
+    setTimeout(() => {
+      setWatchlist(prev => prev ? prev.filter(s => s !== symbol) : prev);
+      setQuotes(prev => {
+        const newQuotes = { ...prev };
+        delete newQuotes[symbol];
+        return newQuotes;
+      });
+      setRemovingItems(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(symbol);
+        return newSet;
+      });
+    }, 300);
+  };
+
+  const handleRemoveWithAnimation = (symbol: string) => {
+    if (!removalAnims[symbol]) {
+      setRemovalAnims(prev => ({ ...prev, [symbol]: new Animated.Value(1) }));
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Animated.timing(removalAnims[symbol] || new Animated.Value(1), {
+      toValue: 0,
+      duration: 300,
+      useNativeDriver: true,
+    }).start(() => {
+      removeFromWatchlist(symbol);
+      setRemovalAnims(prev => {
+        const copy = { ...prev };
+        delete copy[symbol];
+        return copy;
+      });
     });
   };
 
@@ -459,12 +561,12 @@ export default function StocksPage() {
     return nyHour * 60 + nyMinute;
   };
 
-  // Auto-refresh: 5s during regular hours, 1min during PM/AH, none during closed
+  // Replace the auto-refresh useEffect with a robust version
   useEffect(() => {
-    loadQuotes();
-    const setAppropriateInterval = () => {
+    if (!watchlist) return;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    function getIntervalMs() {
       const mins = getETMinutesSinceMidnight();
-      // 4:00 AM = 240, 9:30 AM = 570, 4:00 PM = 960, 8:00 PM = 1200
       if (mins >= 570 && mins < 960) {
         // Regular hours: 5 seconds
         return 5000;
@@ -472,33 +574,31 @@ export default function StocksPage() {
         // Pre-market or after-hours: 1 minute
         return 60000;
       } else {
-        // Closed: no auto-refresh
-        return null;
+        // Closed: 5 minutes
+        return 300000;
       }
-    };
-    let interval = setAppropriateInterval();
-    let intervalRefId: any = null;
-    if (interval) {
-      intervalRefId = setInterval(() => {
-        loadQuotes();
-        // Check if interval needs to change (e.g., market opens/closes)
-        const newInterval = setAppropriateInterval();
-        if (newInterval !== interval) {
-          if (intervalRefId) clearInterval(intervalRefId);
-          interval = newInterval;
-          if (interval) {
-            intervalRefId = setInterval(() => loadQuotes(), interval);
-          }
-        }
-      }, interval);
     }
-    // Cleanup interval on unmount
-    return () => {
-      if (intervalRefId) {
-        clearInterval(intervalRefId);
+    let lastInterval = getIntervalMs();
+    async function tick() {
+      if (watchlist) {
+        quoteCache.current = {}; // Clear cache before each auto-refresh
+        await loadQuotes(watchlist);
       }
+      // Check if interval needs to change
+      const newInterval = getIntervalMs();
+      if (newInterval !== lastInterval) {
+        if (intervalId) clearInterval(intervalId);
+        lastInterval = newInterval;
+        intervalId = setInterval(tick, lastInterval);
+      }
+    }
+    intervalId = setInterval(tick, lastInterval);
+    // Initial tick
+    tick();
+    return () => {
+      if (intervalId) clearInterval(intervalId);
     };
-  }, []);
+  }, [watchlist]);
 
   useEffect(() => {
     const timeoutId: any = setTimeout(() => {
@@ -508,24 +608,17 @@ export default function StocksPage() {
     return () => clearTimeout(timeoutId);
   }, [searchQuery]);
 
-  // Show after-hours/pre-market prices if available
-  const getCurrentPrice = (quote: StockQuote) => {
-    if (quote.marketState === 'POST' && quote.postMarketPrice) return quote.postMarketPrice;
-    if (quote.marketState === 'PRE' && quote.preMarketPrice) return quote.preMarketPrice;
-    return quote.price;
-  };
-  const getCurrentChange = (quote: StockQuote) => {
-    if (quote.marketState === 'POST' && quote.postMarketChange) return quote.postMarketChange;
-    if (quote.marketState === 'PRE' && quote.preMarketChange) return quote.preMarketChange;
-    return quote.change;
-  };
-  const getCurrentChangePercent = (quote: StockQuote) => {
-    if (quote.marketState === 'POST' && quote.postMarketChangePercent) return quote.postMarketChangePercent;
-    if (quote.marketState === 'PRE' && quote.preMarketChangePercent) return quote.preMarketChangePercent;
-    return quote.changePercent;
-  };
-
-  const getMarketStatus = (quote: StockQuote) => {
+  const getMarketStatus = (quote?: StockQuote) => {
+    if (!quote) return 'CLOSED';
+    
+    // Check if this is a crypto asset (CRYPTOCURRENCY quote type)
+    const isCrypto = quote.quoteType === 'CRYPTOCURRENCY';
+    
+    if (isCrypto) {
+      return '24/7';
+    }
+    
+    // Traditional stock market logic
     // Get current time in America/New_York robustly
     const now = new Date();
     const nyTimeString = now.toLocaleString('en-US', { timeZone: 'America/New_York', hour12: false });
@@ -555,6 +648,30 @@ export default function StocksPage() {
     return 'CLOSED';
   };
 
+  // Show after-hours/pre-market prices if available
+  const getCurrentPrice = (quote?: StockQuote) => {
+    if (!quote) return 0;
+    const state = getMarketStatus(quote);
+    if (state === 'AH' && quote.postMarketPrice) return quote.postMarketPrice;
+    if (state === 'PM' && quote.preMarketPrice) return quote.preMarketPrice;
+    return quote.price;
+  };
+  const getCurrentChange = (quote?: StockQuote) => {
+    if (!quote) return 0;
+    const state = getMarketStatus(quote);
+    if (state === 'AH' && quote.postMarketChange) return quote.postMarketChange;
+    if (state === 'PM' && quote.preMarketChange) return quote.preMarketChange;
+    return quote.change;
+  };
+  const getCurrentChangePercent = (quote?: StockQuote) => {
+    if (!quote) return 0;
+    const state = getMarketStatus(quote);
+    if (state === 'AH' && quote.postMarketChangePercent) return quote.postMarketChangePercent;
+    if (state === 'PM' && quote.preMarketChangePercent) return quote.preMarketChangePercent;
+    return quote.changePercent;
+  };
+
+
   // Helper to get display name and type for a symbol
   const getItemMeta = (symbol: string) => {
     const idx = marketIndices.find(i => i.symbol === symbol);
@@ -562,35 +679,9 @@ export default function StocksPage() {
     const crypto = popularCryptos.find(c => c.symbol === symbol);
     if (crypto) return { name: crypto.name, isIndex: false, isCrypto: true };
     const quote = quotes[symbol];
-    return { name: quote?.name || symbol, isIndex: false, isCrypto: false };
-  };
-
-  const addToWatchlistWithCheck = (symbol: string, isSearch = false) => {
-    setJustAdded(symbol);
-    if (!isSearch) setPendingRemoval((prev) => [...prev, symbol]);
-    if (!checkmarkAnims.current[symbol]) {
-      checkmarkAnims.current[symbol] = new Animated.Value(0);
-    }
-    const anim = checkmarkAnims.current[symbol];
-    anim.setValue(0);
-    console.log('Triggering checkmark animation for', symbol);
-    Animated.timing(anim, {
-      toValue: 1,
-      duration: 300,
-      useNativeDriver: true,
-    }).start(() => {
-      setTimeout(() => {
-        Animated.timing(anim, {
-          toValue: 0,
-          duration: 300,
-          useNativeDriver: true,
-        }).start(() => {
-          setJustAdded(null);
-          addToWatchlist(symbol);
-          if (!isSearch) setPendingRemoval((prev) => prev.filter((s) => s !== symbol));
-        });
-      }, 700);
-    });
+    // Use quoteType from actual quote data for more accurate detection
+    const isCrypto = quote?.quoteType === 'CRYPTOCURRENCY';
+    return { name: quote?.name || symbol, isIndex: false, isCrypto: isCrypto };
   };
 
   useEffect(() => {
@@ -775,15 +866,112 @@ export default function StocksPage() {
       }
 
       // Remove the extra dot and use only the colored circle
+      if (session === 'open') {
+        // Calculate time until market close (4:00pm ET)
+        const closeMins = 16 * 60; // 4:00pm
+        const minsLeft = regularEnd - mins;
+        const hours = Math.floor(minsLeft / 60);
+        const minsLeftDisplay = minsLeft % 60;
+        const text = `${hours}h ${minsLeftDisplay}m until market close`;
+        setMarketStatusDisplay({ text, color });
+        return;
+      }
       const text = `${sessionNames[session]} • ${timeDisplay} until ${nextSessionText}`;
       setMarketStatusDisplay({ text, color });
     }
     updateMarketStatusText();
-    const interval = setInterval(updateMarketStatusText, 60000);
-    return () => clearInterval(interval);
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let appStateListener: any = null;
+
+    function startPreciseTimer() {
+      // Clear any existing timers
+      if (intervalId) clearInterval(intervalId);
+      if (timeoutId) clearTimeout(timeoutId);
+      // Calculate ms until next second
+      const now = new Date();
+      const msToNextSecond = 1000 - now.getMilliseconds();
+      timeoutId = setTimeout(() => {
+        updateMarketStatusText();
+        intervalId = setInterval(updateMarketStatusText, 1000);
+      }, msToNextSecond);
+    }
+
+    updateMarketStatusText();
+    startPreciseTimer();
+
+    // Resync timer when app comes to foreground
+    appStateListener = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        updateMarketStatusText();
+        startPreciseTimer();
+      }
+    });
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+      if (timeoutId) clearTimeout(timeoutId);
+      if (appStateListener) appStateListener.remove();
+    };
   }, []);
 
-  if (loading) {
+  // Helper: is US stock (not index/crypto)
+  const isUSStock = (symbol: string) => {
+    return !symbol.startsWith('^') && !symbol.endsWith('-USD');
+  };
+
+  // Fetch Alpha Vantage prices every 1 minute for stocks
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval>;
+    async function fetchAllAlphaVantage() {
+      if (!watchlist) return;
+      const updates: Record<string, number> = {};
+      await Promise.all(watchlist.map(async (symbol) => {
+        if (isUSStock(symbol)) {
+          // const av = await fetchAlphaVantagePrice(symbol); // Removed Alpha Vantage call
+          // if (av && av.price) updates[symbol] = av.price; // Removed Alpha Vantage state
+        }
+      }));
+      // setAlphaVantagePrices(prev => ({ ...prev, ...updates })); // Removed Alpha Vantage state
+    }
+    fetchAllAlphaVantage();
+    interval = setInterval(fetchAllAlphaVantage, 60000);
+    return () => clearInterval(interval);
+  }, [watchlist]);
+
+  // Track scroll position
+  const handleScroll = (event: any) => {
+    scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+  };
+
+  // Restore scroll position when focused
+  useEffect(() => {
+    if (isFocused && scrollViewRef.current) {
+      setTimeout(() => {
+        scrollViewRef.current?.scrollTo({ y: scrollOffsetRef.current, animated: false });
+      }, 0);
+    }
+  }, [isFocused]);
+
+  useEffect(() => {
+    if (!watchlist) return;
+    watchlist.forEach(symbol => {
+      const currentPrice = quotes[symbol]?.price;
+      const prevPrice = lastPrices.current[symbol];
+      if (prevPrice !== undefined && prevPrice !== currentPrice) {
+        const color = currentPrice > prevPrice ? 'rgba(16,185,129,0.25)' : 'rgba(239,68,68,0.25)';
+        if (priceHighlights[symbol]?.timeout) clearTimeout(priceHighlights[symbol].timeout!);
+        const timeout = setTimeout(() => {
+          setPriceHighlights(ph => ({ ...ph, [symbol]: { color: 'transparent', timeout: null } }));
+        }, 2000);
+        setPriceHighlights(ph => ({ ...ph, [symbol]: { color, timeout } }));
+      }
+      lastPrices.current[symbol] = currentPrice;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchlist, quotes]);
+
+  if (watchlist === null || loading) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background }}>
         <ActivityIndicator size="large" color={colors.accent} />
@@ -792,10 +980,35 @@ export default function StocksPage() {
     );
   }
 
+  // 1. Create a HeaderComponent for all header content above the watchlist
+    const WatchlistHeader = () => {
+    return (
+      <View style={{ paddingHorizontal: 20, paddingTop: 20, paddingBottom: 24, backgroundColor: colors.background }}>
+        {/* Market Status Display */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+          {/* Colored circle for session */}
+          <View style={{
+            width: 12,
+            height: 12,
+            borderRadius: 6,
+            backgroundColor: marketStatusDisplay.color,
+            marginRight: 8,
+          }} />
+          <Text style={{ color: colors.textSecondary, fontSize: 16, fontWeight: '600' }}>
+            {marketStatusDisplay.text}
+          </Text>
+        </View>
+      </View>
+    );
+  };
+
+
+  // 2. Use a single ScrollView for everything to scroll from the top
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <ScrollView
-        style={{ flex: 1, backgroundColor: colors.background }}
+      <ScrollView 
+        style={{ flex: 1 }}
+        showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl 
             refreshing={refreshing} 
@@ -805,51 +1018,61 @@ export default function StocksPage() {
           />
         }
       >
-        <View style={{ paddingHorizontal: 20, paddingTop: 60, paddingBottom: 24, backgroundColor: colors.background }}>
-          {/* Header */}
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
-            <View style={{ flex: 1, marginRight: 12 }}>
-              <Text style={{ fontSize: 32, fontWeight: 'bold', color: colors.text, marginBottom: 4 }}>
+        {/* Fixed Header - Watchlist Title and Search */}
+        <View style={{ paddingHorizontal: 20, paddingTop: 60, paddingBottom: 16, backgroundColor: colors.background }}>
+          {/* Header with title and buttons */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 28, fontWeight: 'bold', color: colors.text, marginBottom: 4 }}>
                 Watchlist
               </Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                {/* Colored circle for session */}
-                <View style={{
-                  width: 12,
-                  height: 12,
-                  borderRadius: 6,
-                  backgroundColor: marketStatusDisplay.color,
-                  marginRight: 8,
-                }} />
-                <Text style={{ color: colors.textSecondary, fontSize: 16, fontWeight: '600' }}>
-                  {marketStatusDisplay.text}
-                </Text>
-              </View>
-              <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+              <Text style={{ fontSize: 14, color: colors.textSecondary, marginBottom: 4 }}>
                 Last updated: {lastUpdate.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} ET
               </Text>
             </View>
-            <TouchableOpacity
-              onPress={() => setShowSearch(!showSearch)}
-              style={{
-                backgroundColor: colors.accent,
-                paddingHorizontal: 16,
-                paddingVertical: 8,
-                borderRadius: 8,
-                shadowColor: colors.accent,
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.2,
-                shadowRadius: 4,
-                alignSelf: 'flex-start',
-                marginTop: 4,
-              }}
-            >
-              {showSearch ? (
-                <Text style={{ color: colors.buttonText, fontWeight: '600' }}>Cancel</Text>
-              ) : (
-                <Ionicons name="search-outline" size={22} color={colors.buttonText} />
-              )}
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <TouchableOpacity
+                onPress={() => {
+                  setReorderWatchlist([...watchlist!]);
+                  setShowReorderModal(true);
+                }}
+                style={{
+                  backgroundColor: colors.buttonBackground,
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  borderRadius: 8,
+                  shadowColor: colors.shadow,
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.1,
+                  shadowRadius: 4,
+                  alignSelf: 'flex-start',
+                  marginTop: 4,
+                }}
+              >
+                <Ionicons name="reorder-three" size={20} color={colors.text} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setShowSearch(!showSearch)}
+                style={{
+                  backgroundColor: colors.accent,
+                  paddingHorizontal: 16,
+                  paddingVertical: 8,
+                  borderRadius: 8,
+                  shadowColor: colors.accent,
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.2,
+                  shadowRadius: 4,
+                  alignSelf: 'flex-start',
+                  marginTop: 4,
+                }}
+              >
+                {showSearch ? (
+                  <Text style={{ color: colors.buttonText, fontWeight: '600' }}>Cancel</Text>
+                ) : (
+                  <Ionicons name="search-outline" size={22} color={colors.buttonText} />
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* Modern Search Bar */}
@@ -1099,17 +1322,104 @@ export default function StocksPage() {
               )}
             </View>
           )}
+        </View>
 
-          {/* Popular Cryptos Section */}
-          <View style={{ marginBottom: 24 }}>
-            <Text style={{ fontSize: 18, fontWeight: 'bold', color: colors.text, marginBottom: 8 }}>
-              Popular Cryptos
+        {/* Market Status Display - Above Crypto */}
+        <View style={{ paddingHorizontal: 20, paddingBottom: 16, backgroundColor: colors.background }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+            {/* Colored circle for session */}
+            <View style={{
+              width: 12,
+              height: 12,
+              borderRadius: 6,
+              backgroundColor: marketStatusDisplay.color,
+              marginRight: 8,
+            }} />
+            <Text style={{ color: colors.textSecondary, fontSize: 16, fontWeight: '600' }}>
+              {marketStatusDisplay.text}
             </Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingBottom: 4 }}>
-              {popularCryptos.filter(crypto => !watchlist.includes(crypto.symbol) || pendingRemoval.includes(crypto.symbol)).map((crypto) => (
+          </View>
+        </View>
+
+        {/* Popular Cryptos Section - Fixed Position */}
+        <View style={{ paddingHorizontal: 20, paddingBottom: 16, backgroundColor: colors.background }}>
+          <Text style={{ fontSize: 18, fontWeight: 'bold', color: colors.text, marginBottom: 8 }}>
+            Popular Cryptos
+          </Text>
+          <ScrollView 
+            ref={cryptoScrollRef}
+            horizontal 
+            showsHorizontalScrollIndicator={false} 
+            style={{ paddingBottom: 4 }}
+            key="crypto-scroll"
+          >
+            {popularCryptos.filter(crypto => !watchlist || !watchlist.includes(crypto.symbol) || pendingRemoval.includes(crypto.symbol)).map((crypto) => (
+              <TouchableOpacity
+                key={crypto.symbol}
+                onPress={() => addToWatchlistWithCheck(crypto.symbol)}
+                style={{
+                  backgroundColor: colors.searchBackground,
+                  borderRadius: 12,
+                  paddingHorizontal: 16,
+                  paddingVertical: 12,
+                  marginRight: 12,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  minWidth: 60,
+                  position: 'relative',
+                  overflow: 'visible',
+                }}
+              >
+                <Text style={{ fontWeight: '700', color: colors.text, fontSize: 16 }}>{crypto.shortName}</Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 12 }}>{crypto.name}</Text>
+                {justAdded === crypto.symbol && checkmarkAnims.current[crypto.symbol] && (
+                  <Animated.View
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      right: 0,
+                      left: 0,
+                      bottom: 0,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      zIndex: 2,
+                      opacity: checkmarkAnims.current[crypto.symbol],
+                      transform: [{ scale: checkmarkAnims.current[crypto.symbol].interpolate({ inputRange: [0, 1], outputRange: [0.5, 1] }) }],
+                      backgroundColor: 'rgba(16,185,129,0.25)',
+                      borderRadius: 8,
+                    }}
+                  >
+                    <Ionicons name="checkmark" size={28} color={colors.accent} />
+                  </Animated.View>
+                )}
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+
+        {/* Popular Stocks Section - Fixed Position */}
+        <View style={{ paddingHorizontal: 20, paddingBottom: 16, backgroundColor: colors.background }}>
+          <Text style={{ fontSize: 18, fontWeight: 'bold', color: colors.text, marginBottom: 8 }}>
+            Popular Stocks
+          </Text>
+          <ScrollView 
+            ref={stocksScrollRef}
+            horizontal 
+            showsHorizontalScrollIndicator={false} 
+            style={{ paddingBottom: 4 }}
+            key="stocks-scroll"
+          >
+            {applePresetStocks.filter(symbol => !watchlist || !watchlist.includes(symbol) || pendingRemoval.includes(symbol)).map((symbol) => {
+              const quote = quotes[symbol];
+              const name = quote?.name || symbol;
+              const currentPrice = getCurrentPrice(quote);
+              const currentChange = getCurrentChange(quote);
+              const currentChangePercent = getCurrentChangePercent(quote);
+              const isPositive = currentChange >= 0;
+              return (
                 <TouchableOpacity
-                  key={crypto.symbol}
-                  onPress={() => addToWatchlistWithCheck(crypto.symbol)}
+                  key={symbol}
+                  onPress={() => addToWatchlistWithCheck(symbol)}
                   style={{
                     backgroundColor: colors.searchBackground,
                     borderRadius: 12,
@@ -1123,9 +1433,9 @@ export default function StocksPage() {
                     overflow: 'visible',
                   }}
                 >
-                  <Text style={{ fontWeight: '700', color: colors.text, fontSize: 16 }}>{crypto.shortName}</Text>
-                  <Text style={{ color: colors.textSecondary, fontSize: 12 }}>{crypto.name}</Text>
-                  {justAdded === crypto.symbol && checkmarkAnims.current[crypto.symbol] && (
+                  <Text style={{ fontWeight: '700', color: colors.text, fontSize: 16 }}>{symbol}</Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: 12 }}>{name}</Text>
+                  {justAdded === symbol && checkmarkAnims.current[symbol] && (
                     <Animated.View
                       style={{
                         position: 'absolute',
@@ -1136,8 +1446,8 @@ export default function StocksPage() {
                         alignItems: 'center',
                         justifyContent: 'center',
                         zIndex: 2,
-                        opacity: checkmarkAnims.current[crypto.symbol],
-                        transform: [{ scale: checkmarkAnims.current[crypto.symbol].interpolate({ inputRange: [0, 1], outputRange: [0.5, 1] }) }],
+                        opacity: checkmarkAnims.current[symbol],
+                        transform: [{ scale: checkmarkAnims.current[symbol].interpolate({ inputRange: [0, 1], outputRange: [0.5, 1] }) }],
                         backgroundColor: 'rgba(16,185,129,0.25)',
                         borderRadius: 8,
                       }}
@@ -1146,131 +1456,412 @@ export default function StocksPage() {
                     </Animated.View>
                   )}
                 </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-
-          {/* Popular Stocks Section */}
-          <View style={{ marginBottom: 24, marginTop: 8 }}>
-            <Text style={{ fontSize: 18, fontWeight: 'bold', color: colors.text, marginBottom: 8 }}>
-              Popular Stocks
-            </Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ paddingBottom: 4 }}>
-              {applePresetStocks.filter(symbol => !watchlist.includes(symbol) || pendingRemoval.includes(symbol)).map((symbol) => {
-                const quote = quotes[symbol];
-                const name = quote?.name || symbol;
-                return (
-                  <TouchableOpacity
-                    key={symbol}
-                    onPress={() => addToWatchlistWithCheck(symbol)}
-                    style={{
-                      backgroundColor: colors.searchBackground,
-                      borderRadius: 12,
-                      paddingHorizontal: 16,
-                      paddingVertical: 12,
-                      marginRight: 12,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      minWidth: 60,
-                      position: 'relative',
-                      overflow: 'visible',
-                    }}
-                  >
-                    <Text style={{ fontWeight: '700', color: colors.text, fontSize: 16 }}>{symbol}</Text>
-                    <Text style={{ color: colors.textSecondary, fontSize: 12 }}>{name}</Text>
-                    {justAdded === symbol && checkmarkAnims.current[symbol] && (
-                      <Animated.View
-                        style={{
-                          position: 'absolute',
-                          top: 0,
-                          right: 0,
-                          left: 0,
-                          bottom: 0,
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          zIndex: 2,
-                          opacity: checkmarkAnims.current[symbol],
-                          transform: [{ scale: checkmarkAnims.current[symbol].interpolate({ inputRange: [0, 1], outputRange: [0.5, 1] }) }],
-                          backgroundColor: 'rgba(16,185,129,0.25)',
-                          borderRadius: 8,
-                        }}
-                      >
-                        <Ionicons name="checkmark" size={28} color={colors.accent} />
-                      </Animated.View>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
-
-          {/* Unified Watchlist */}
-          <View style={{ marginBottom: 48 }}>
-            {watchlist.map((symbol) => {
-              const quote = quotes[symbol];
-              if (!quote) return null;
-              const { name, isIndex, isCrypto } = getItemMeta(symbol);
-              const currentPrice = getCurrentPrice(quote);
-              const currentChange = getCurrentChange(quote);
-              const currentChangePercent = getCurrentChangePercent(quote);
-              const isPositive = currentChange >= 0;
-              const marketStatus = getMarketStatus(quote);
-              return (
-                <TouchableOpacity
-                  key={symbol}
-                  onPress={() => router.push({ pathname: '/chart', params: { symbol, name } })}
-                  style={{ backgroundColor: colors.searchBackground, borderRadius: 16, padding: 20, marginBottom: 16, shadowColor: colors.shadow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 8, elevation: 3 }}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <View style={{ flex: 1 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
-                        <Text style={{ fontSize: isIndex ? 18 : 22, fontWeight: '700', color: colors.text }}>{name}</Text>
-                        <View style={{ marginLeft: 8, backgroundColor: marketStatus === 'OPEN' ? colors.accent : marketStatus === 'PM' ? '#F59E42' : marketStatus === 'AH' ? '#8B5CF6' : colors.textSecondary, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 }}>
-                          <Text style={{ fontSize: 10, color: colors.buttonText, fontWeight: '700' }}>{marketStatus}</Text>
-                        </View>
-                        {isIndex && (
-                          <Text style={{ fontSize: 12, color: colors.textSecondary, marginLeft: 8 }}>({symbol})</Text>
-                        )}
-                        {isCrypto && (
-                          <Text style={{ fontSize: 12, color: '#FBBF24', marginLeft: 8 }}>Crypto</Text>
-                        )}
-                      </View>
-                      {!isIndex && (
-                        <Text style={{ fontSize: 14, color: colors.textSecondary, marginBottom: 4 }} numberOfLines={1}>
-                          {symbol}
-                        </Text>
-                      )}
-                      <Text style={{ fontSize: 28, fontWeight: 'bold', color: colors.text }}>
-                        ${formatPrice(currentPrice)}
-                      </Text>
-                      <Text style={{ fontSize: 16, fontWeight: '600', color: isPositive ? colors.accent : '#EF4444' }}>
-                        {isPositive ? '+' : ''}${currentChange.toFixed(2)} ({currentChangePercent.toFixed(2)}%)
-                      </Text>
-                      {(quote.postMarketPrice > 0 || quote.preMarketPrice > 0) && (
-                        <Text style={{ fontSize: 12, color: '#8B5CF6', marginTop: 2 }}>
-                          {quote.postMarketPrice > 0 ? `AH: $${formatPrice(quote.postMarketPrice)}` : ''}
-                          {quote.preMarketPrice > 0 ? `PM: $${formatPrice(quote.preMarketPrice)}` : ''}
-                        </Text>
-                      )}
-                      {!isIndex && (
-                        <Text style={{ color: colors.textSecondary, fontSize: 14, marginTop: 4 }}>
-                          H: ${formatPrice(quote.dayHigh)} | L: ${formatPrice(quote.dayLow)} | Vol: {formatLargeNumber(quote.volume)}
-                        </Text>
-                      )}
-                    </View>
-                    <TouchableOpacity
-                      onPress={() => removeFromWatchlist(symbol)}
-                      style={{ backgroundColor: '#FEE2E2', padding: 8, borderRadius: 20, marginLeft: 12 }}
-                    >
-                      <Text style={{ color: '#DC2626', fontWeight: 'bold' }}>✕</Text>
-                    </TouchableOpacity>
-                  </View>
-                </TouchableOpacity>
               );
             })}
-          </View>
+          </ScrollView>
+        </View>
+
+        {/* Watchlist Items */}
+        <View style={{ paddingHorizontal: 20, paddingBottom: 48 }}>
+          {watchlist.map((symbol, index) => {
+            const quote = quotes[symbol];
+            if (!quote) return null;
+            const { name, isIndex, isCrypto } = getItemMeta(symbol);
+            const currentPrice = getCurrentPrice(quote);
+            const currentChange = getCurrentChange(quote);
+            const currentChangePercent = getCurrentChangePercent(quote);
+            const isPositive = currentChange >= 0;
+            const marketStatus = getMarketStatus(quote);
+            const highlightColor = priceHighlights[symbol]?.color || 'transparent';
+            const anim = removalAnims[symbol] || new Animated.Value(1);
+            
+            // Determine if we should show after/pre-market label using Yahoo data
+            let sessionLabel = '';
+            let sessionPrice = null;
+            // Get NY time
+            const now = new Date();
+            const nyTimeString = now.toLocaleString('en-US', { timeZone: 'America/New_York', hour12: false });
+            const timePart = nyTimeString.split(', ')[1];
+            const [nyHour, nyMinute] = timePart.split(':').map(Number);
+            const minsSinceMidnight = nyHour * 60 + nyMinute;
+            
+            if (!isIndex && !isCrypto) {
+              if ((minsSinceMidnight >= 960) || (minsSinceMidnight < 240)) {
+                sessionLabel = 'After Hours';
+                sessionPrice = quote.price;
+              } else if (minsSinceMidnight >= 240 && minsSinceMidnight < 570) {
+                sessionLabel = 'Pre-Market';
+                sessionPrice = quote.price;
+              }
+            }
+            
+            return (
+              <Animated.View
+                key={symbol}
+                style={{
+                  opacity: anim,
+                  transform: [{ translateX: anim.interpolate({ inputRange: [0, 1], outputRange: [100, 0] }) }],
+                }}
+              >
+                <Swipeable
+                  renderRightActions={() => (
+                    <View style={{
+                      width: 80,
+                      height: '100%',
+                      backgroundColor: '#DC2626',
+                      borderTopRightRadius: 16,
+                      borderBottomRightRadius: 16,
+                      shadowColor: '#000',
+                      shadowOffset: { width: -2, height: 2 },
+                      shadowOpacity: 0.15,
+                      shadowRadius: 6,
+                      elevation: 4,
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      borderLeftWidth: 1,
+                      borderLeftColor: 'rgba(255,255,255,0.1)',
+                    }}>
+                      <TouchableOpacity
+                        onPress={() => handleRemoveWithAnimation(symbol)}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                          shadowColor: '#000',
+                          shadowOffset: { width: 1, height: 0 },
+                          shadowOpacity: 0.1,
+                          shadowRadius: 2,
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="trash-outline" size={28} color="#FFF" />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                  overshootRight={false}
+                  overshootLeft={false}
+                  friction={2}
+                  rightThreshold={40}
+                  ref={(ref) => {
+                    swipeableRefs.current[symbol] = ref;
+                  }}
+                >
+                  <TouchableOpacity
+                    onPress={() => router.push(`/chart?symbol=${symbol}`)}
+                    style={{
+                      backgroundColor: colors.searchBackground,
+                      borderRadius: 16,
+                      padding: 20,
+                      marginBottom: 16,
+                      shadowColor: colors.shadow,
+                      shadowOffset: { width: 0, height: 2 },
+                      shadowOpacity: 0.15,
+                      shadowRadius: 8,
+                      elevation: 3,
+                      borderWidth: 1,
+                      borderColor: 'rgba(255,255,255,0.05)',
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
+                          <Text style={{ fontSize: isIndex ? 18 : 22, fontWeight: '700', color: colors.text }}>{name}</Text>
+                          <View style={{ marginLeft: 8, backgroundColor: marketStatus === 'OPEN' ? '#10B981' : marketStatus === 'PM' ? '#F59E42' : marketStatus === 'AH' ? '#8B5CF6' : colors.textSecondary, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 }}>
+                            <Text style={{ fontSize: 10, color: colors.buttonText, fontWeight: '700' }}>{marketStatus}</Text>
+                          </View>
+                          {isIndex && (
+                            <Text style={{ fontSize: 12, color: colors.textSecondary, marginLeft: 8 }}>({symbol})</Text>
+                          )}
+                          {isCrypto && (
+                            <Text style={{ fontSize: 12, color: '#FBBF24', marginLeft: 8 }}>Crypto</Text>
+                          )}
+                        </View>
+                        {!isIndex && (
+                          <Text style={{ fontSize: 14, color: colors.textSecondary, marginBottom: 4 }} numberOfLines={1}>
+                            {symbol}
+                          </Text>
+                        )}
+                        <Text style={{ fontSize: 28, fontWeight: 'bold', color: highlightColor !== 'transparent' ? (highlightColor === 'rgba(16,185,129,0.25)' ? '#10B981' : '#EF4444') : colors.text }}>
+                          ${formatPrice(currentPrice)}
+                        </Text>
+                        <Text style={{ fontSize: 16, fontWeight: '600', color: isPositive ? '#10B981' : '#EF4444' }}>
+                          {isPositive ? '+' : ''}${currentChange.toFixed(2)} ({currentChangePercent.toFixed(2)}%)
+                        </Text>
+                        {/* Yahoo After Hours/Pre-Market label */}
+                        {sessionLabel && sessionPrice != null && (
+                          <Text style={{ fontSize: 13, color: sessionLabel === 'After Hours' ? '#8B5CF6' : '#F59E0B', marginTop: 2 }}>
+                            {sessionLabel}: ${formatPrice(sessionPrice)}
+                          </Text>
+                        )}
+                        {(quote.postMarketPrice > 0 || quote.preMarketPrice > 0) && (
+                          <Text style={{ fontSize: 12, color: '#8B5CF6', marginTop: 2 }}>
+                            {quote.postMarketPrice > 0 ? `AH: $${formatPrice(quote.postMarketPrice)}` : ''}
+                            {quote.preMarketPrice > 0 ? `PM: $${formatPrice(quote.preMarketPrice)}` : ''}
+                          </Text>
+                        )}
+                        {!isIndex && (
+                          <Text style={{ color: colors.textSecondary, fontSize: 14, marginTop: 4 }}>
+                            H: ${formatPrice(quote.dayHigh)} | L: ${formatPrice(quote.dayLow)} | Vol: {formatLargeNumber(quote.volume)}
+                          </Text>
+                        )}
+                      </View>
+                      {/* Drag handle placeholder - removed drag functionality for now */}
+                      <View style={{ padding: 8, marginLeft: 8 }}>
+                        <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                </Swipeable>
+              </Animated.View>
+            );
+          })}
         </View>
       </ScrollView>
+
+            {/* Reorder Modal */}
+      <Modal
+        visible={showReorderModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowReorderModal(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
+          {/* Modal Header */}
+          <View style={{ 
+            flexDirection: 'row', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            paddingHorizontal: 20,
+            paddingTop: 60,
+            paddingBottom: 20,
+            borderBottomWidth: 1,
+            borderBottomColor: colors.border,
+            backgroundColor: colors.background
+          }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 24, fontWeight: 'bold', color: colors.text }}>
+                Reorder Watchlist
+              </Text>
+              <Text style={{ fontSize: 14, color: colors.textSecondary, marginTop: 4 }}>
+                Long press and drag to reorder
+              </Text>
+            </View>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity
+                onPress={() => setShowReorderModal(false)}
+                style={{
+                  paddingHorizontal: 16,
+                  paddingVertical: 10,
+                  borderRadius: 10,
+                  backgroundColor: colors.buttonBackground,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                }}
+              >
+                <Text style={{ color: colors.text, fontWeight: '600' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  setWatchlist(reorderWatchlist);
+                  AsyncStorage.setItem('watchlist', JSON.stringify(reorderWatchlist));
+                  setShowReorderModal(false);
+                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                }}
+                style={{
+                  paddingHorizontal: 20,
+                  paddingVertical: 10,
+                  borderRadius: 10,
+                  backgroundColor: colors.accent,
+                  shadowColor: colors.accent,
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.2,
+                  shadowRadius: 4,
+                  elevation: 3,
+                }}
+              >
+                <Text style={{ color: colors.buttonText, fontWeight: '600' }}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Instructions */}
+          <View style={{ 
+            paddingHorizontal: 20, 
+            paddingVertical: 16, 
+            backgroundColor: colors.sectionBackground,
+            borderBottomWidth: 1,
+            borderBottomColor: colors.border,
+          }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View style={{ 
+                backgroundColor: colors.accent, 
+                borderRadius: 12, 
+                padding: 8, 
+                marginRight: 12 
+              }}>
+                <Ionicons name="information-circle" size={16} color={colors.buttonText} />
+              </View>
+              <Text style={{ color: colors.textSecondary, fontSize: 14, flex: 1 }}>
+                Drag items to reorder your watchlist. The order will be saved when you tap Save.
+              </Text>
+            </View>
+          </View>
+
+          {/* Draggable List */}
+          <View style={{ flex: 1 }}>
+            <DraggableFlatList
+              data={reorderWatchlist}
+              keyExtractor={(item: string) => item}
+              onDragEnd={({ data }: { data: string[] }) => {
+                setReorderWatchlist(data);
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
+              renderItem={({ item: symbol, drag, isActive }: { item: string; drag: () => void; isActive: boolean }) => {
+                const quote = quotes[symbol];
+                const { name, isIndex, isCrypto } = getItemMeta(symbol);
+                const currentPrice = getCurrentPrice(quote);
+                const currentChange = getCurrentChange(quote);
+                const currentChangePercent = getCurrentChangePercent(quote);
+                const isPositive = currentChange >= 0;
+                const marketStatus = getMarketStatus(quote);
+
+                return (
+                  <Animated.View
+                    style={{
+                      opacity: isActive ? 0.9 : 1,
+                      transform: [
+                        { scale: isActive ? 1.02 : 1 },
+                        { rotateZ: isActive ? '2deg' : '0deg' }
+                      ],
+                      shadowOpacity: isActive ? 0.3 : 0.1,
+                      shadowRadius: isActive ? 8 : 4,
+                      elevation: isActive ? 6 : 2,
+                    }}
+                  >
+                    <TouchableOpacity
+                      onLongPress={() => {
+                        drag();
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      }}
+                      style={{
+                        backgroundColor: isActive ? colors.accent + '20' : colors.searchBackground,
+                        borderRadius: 16,
+                        padding: 16,
+                        marginHorizontal: 20,
+                        marginBottom: 8,
+                        shadowColor: colors.shadow,
+                        shadowOffset: { width: 0, height: 2 },
+                        shadowOpacity: isActive ? 0.3 : 0.1,
+                        shadowRadius: isActive ? 8 : 4,
+                        elevation: isActive ? 6 : 2,
+                        borderWidth: 1,
+                        borderColor: isActive ? colors.accent + '40' : colors.border,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                      }}
+                    >
+                      {/* Drag Handle */}
+                      <View style={{ 
+                        padding: 8, 
+                        marginRight: 12,
+                        backgroundColor: isActive ? colors.accent + '30' : colors.buttonBackground,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: isActive ? colors.accent + '50' : colors.border,
+                      }}>
+                        <Ionicons 
+                          name="reorder-three" 
+                          size={18} 
+                          color={isActive ? colors.accent : colors.textSecondary} 
+                        />
+                      </View>
+
+                      {/* Content */}
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                          <Text style={{ 
+                            fontSize: isIndex ? 16 : 18, 
+                            fontWeight: '700', 
+                            color: colors.text 
+                          }}>
+                            {name}
+                          </Text>
+                          <View style={{ 
+                            marginLeft: 8, 
+                            backgroundColor: marketStatus === 'OPEN' ? '#10B981' : marketStatus === 'PM' ? '#F59E42' : marketStatus === 'AH' ? '#8B5CF6' : colors.textSecondary, 
+                            paddingHorizontal: 6, 
+                            paddingVertical: 2, 
+                            borderRadius: 6 
+                          }}>
+                            <Text style={{ fontSize: 10, color: colors.buttonText, fontWeight: '700' }}>
+                              {marketStatus}
+                            </Text>
+                          </View>
+                          {isIndex && (
+                            <Text style={{ fontSize: 12, color: colors.textSecondary, marginLeft: 8 }}>
+                              ({symbol})
+                            </Text>
+                          )}
+                          {isCrypto && (
+                            <Text style={{ fontSize: 12, color: '#FBBF24', marginLeft: 8 }}>
+                              Crypto
+                            </Text>
+                          )}
+                        </View>
+                        {!isIndex && (
+                          <Text style={{ 
+                            fontSize: 13, 
+                            color: colors.textSecondary, 
+                            marginBottom: 4 
+                          }} numberOfLines={1}>
+                            {symbol}
+                          </Text>
+                        )}
+                        <Text style={{ 
+                          fontSize: 20, 
+                          fontWeight: 'bold', 
+                          color: colors.text,
+                          marginBottom: 2
+                        }}>
+                          ${formatPrice(currentPrice)}
+                        </Text>
+                        <Text style={{ 
+                          fontSize: 13, 
+                          fontWeight: '600', 
+                          color: isPositive ? '#10B981' : '#EF4444' 
+                        }}>
+                          {isPositive ? '+' : ''}${currentChange.toFixed(2)} ({currentChangePercent.toFixed(2)}%)
+                        </Text>
+                      </View>
+
+                      {/* Drag indicator */}
+                      <View style={{ 
+                        padding: 4,
+                        opacity: isActive ? 1 : 0.3,
+                      }}>
+                        <Ionicons 
+                          name="chevron-up" 
+                          size={16} 
+                          color={colors.textSecondary} 
+                        />
+                        <Ionicons 
+                          name="chevron-down" 
+                          size={16} 
+                          color={colors.textSecondary} 
+                        />
+                      </View>
+                    </TouchableOpacity>
+                  </Animated.View>
+                );
+              }}
+              containerStyle={{ paddingTop: 8, paddingBottom: 20 }}
+              activationDistance={10}
+              autoscrollThreshold={60}
+            />
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
