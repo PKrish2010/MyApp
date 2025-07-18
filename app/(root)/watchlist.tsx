@@ -20,13 +20,13 @@ import {
 } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 import { Swipeable } from 'react-native-gesture-handler';
+import { styles } from '../../assets/styles/home.styles';
 
 // Cleaned: No Alpha Vantage code, no unused variables, no commented-out legacy code.
 
 // Yahoo Finance API functions
 const fetchYahooQuote = async (symbol: string) => {
   try {
-    // Try the quote endpoint first - it's more reliable for current data
     const quoteResponse = await fetch(
       `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}&fields=regularMarketPrice,regularMarketChange,regularMarketChangePercent,regularMarketPreviousClose,regularMarketDayHigh,regularMarketDayLow,regularMarketVolume,shortName,longName,marketState,preMarketPrice,preMarketChange,preMarketChangePercent,postMarketPrice,postMarketChange,postMarketChangePercent,quoteType`
     );
@@ -39,25 +39,54 @@ const fetchYahooQuote = async (symbol: string) => {
         
         const price = quote.regularMarketPrice ?? 0;
         const change = quote.regularMarketChange ?? 0;
-        const changePercent = quote.regularMarketChangePercent ?? 0;
-        const previousClose = quote.regularMarketPreviousClose ?? price;
-        
-        // Pre-market data
+        let changePercent = quote.regularMarketChangePercent ?? 0;
+        let previousClose = quote.regularMarketPreviousClose ?? price;
+
+        // For cryptocurrencies, use a fallback previous close to avoid infinity%
+        if (quote.quoteType === 'CRYPTOCURRENCY' && previousClose === 0) {
+          // Fallback to the last price from chart data or use price as previousClose
+          const chartResponse = await fetch(
+            `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?region=US&lang=en-US&includePrePost=true&interval=1d&range=5d&corsDomain=finance.yahoo.com`
+          );
+          const chartData = await chartResponse.json();
+          if (chartData.chart && chartData.chart.result && chartData.chart.result[0]) {
+            const result = chartData.chart.result[0];
+            const timestamps = result.timestamp;
+            const quotes = result.indicators.quote[0];
+            if (timestamps && quotes && timestamps.length > 1) {
+              const latestIndex = timestamps.length - 1;
+              previousClose = quotes.close[latestIndex - 1] ?? price; // Use previous day's close
+              changePercent = previousClose !== 0 ? ((price - previousClose) / previousClose) * 100 : 0;
+            } else {
+              changePercent = 0;
+            }
+          } else {
+            changePercent = 0;
+          }
+        }
+
+        // Final fallback: if still a crypto and previousClose is 0, set change and changePercent to 0
+        let finalChange = change;
+        let finalChangePercent = changePercent;
+        if (quote.quoteType === 'CRYPTOCURRENCY' && previousClose === 0) {
+          finalChange = 0;
+          finalChangePercent = 0;
+        }
+
+        // Pre-market and after-hours data
         const preMarketPrice = quote.preMarketPrice ?? 0;
         const preMarketChange = quote.preMarketChange ?? 0;
         const preMarketChangePercent = quote.preMarketChangePercent ?? 0;
-        
-        // After-hours data
         const postMarketPrice = quote.postMarketPrice ?? 0;
         const postMarketChange = quote.postMarketChange ?? 0;
         const postMarketChangePercent = quote.postMarketChangePercent ?? 0;
-        
+
         return {
           symbol: quote.symbol || symbol,
           name: quote.longName || quote.shortName || symbol,
           price: price,
-          change: change,
-          changePercent: changePercent,
+          change: finalChange,
+          changePercent: finalChangePercent,
           previousClose: previousClose,
           dayHigh: quote.regularMarketDayHigh ?? price,
           dayLow: quote.regularMarketDayLow ?? price,
@@ -69,7 +98,6 @@ const fetchYahooQuote = async (symbol: string) => {
           postMarketPrice: postMarketPrice,
           postMarketChange: postMarketChange,
           postMarketChangePercent: postMarketChangePercent,
-          // Market type detection
           quoteType: quote.quoteType || 'EQUITY',
         };
       }
@@ -311,8 +339,8 @@ export default function StocksPage() {
   const stocksScrollRef = useRef<ScrollView>(null);
   const [showReorderModal, setShowReorderModal] = useState(false);
   const [reorderWatchlist, setReorderWatchlist] = useState<string[]>([]);
-
-
+  // Add this state near the other useState hooks
+  const [priceFlash, setPriceFlash] = useState<Record<string, 'up' | 'down' | null>>({});
 
   // Load watchlist from AsyncStorage on mount
   useEffect(() => {
@@ -608,69 +636,128 @@ export default function StocksPage() {
     return () => clearTimeout(timeoutId);
   }, [searchQuery]);
 
+  // 2. Refactor getMarketStatus
   const getMarketStatus = (quote?: StockQuote) => {
     if (!quote) return 'CLOSED';
-    
-    // Check if this is a crypto asset (CRYPTOCURRENCY quote type)
-    const isCrypto = quote.quoteType === 'CRYPTOCURRENCY';
-    
-    if (isCrypto) {
-      return '24/7';
-    }
-    
-    // Traditional stock market logic
-    // Get current time in America/New_York robustly
+    if (quote.quoteType === 'CRYPTOCURRENCY') return '24/7';
+
     const now = new Date();
-    const nyTimeString = now.toLocaleString('en-US', { timeZone: 'America/New_York', hour12: false });
-    // nyTimeString is like '6/8/2024, 05:50:00' or '6/8/2024, 5:50:00'
-    const timePart = nyTimeString.split(', ')[1];
+    const nyTime = now.toLocaleString('en-US', { timeZone: 'America/New_York', hour12: false });
+    const [, timePart] = nyTime.split(', ');
     const [nyHour, nyMinute] = timePart.split(':').map(Number);
     const minsSinceMidnight = nyHour * 60 + nyMinute;
-    if (minsSinceMidnight >= 240 && minsSinceMidnight < 570) {
-      // 4:00 AM to 9:29 AM ET
-      return 'PM';
-    }
-    if (minsSinceMidnight >= 570 && minsSinceMidnight < 960) {
-      // 9:30 AM to 3:59 PM ET
-      return 'OPEN';
-    }
-    if (minsSinceMidnight >= 960 && minsSinceMidnight < 1200) {
-      // 4:00 PM to 8:00 PM ET
-      return 'AH';
-    }
-    if (quote.marketState === 'POST' || quote.marketState === 'POSTPOST') {
-      return 'AH';
-    } else if (quote.marketState === 'PRE' || quote.marketState === 'PREPRE') {
-      return 'PM';
-    } else if (quote.marketState === 'CLOSED') {
-      return 'CLOSED';
-    }
+
+    if (minsSinceMidnight >= 240 && minsSinceMidnight < 570) return 'PM'; // 4:00 AM - 9:29 AM ET
+    if (minsSinceMidnight >= 570 && minsSinceMidnight < 960) return 'OPEN'; // 9:30 AM - 4:00 PM ET
+    if (minsSinceMidnight >= 960 && minsSinceMidnight < 1200) return 'AH'; // 4:00 PM - 8:00 PM ET
+    if (quote.marketState === 'POST' || quote.marketState === 'POSTPOST') return 'AH';
+    if (quote.marketState === 'PRE' || quote.marketState === 'PREPRE') return 'PM';
     return 'CLOSED';
   };
 
-  // Show after-hours/pre-market prices if available
-  const getCurrentPrice = (quote?: StockQuote) => {
-    if (!quote) return 0;
-    const state = getMarketStatus(quote);
-    if (state === 'AH' && quote.postMarketPrice) return quote.postMarketPrice;
-    if (state === 'PM' && quote.preMarketPrice) return quote.preMarketPrice;
-    return quote.price;
-  };
-  const getCurrentChange = (quote?: StockQuote) => {
-    if (!quote) return 0;
-    const state = getMarketStatus(quote);
-    if (state === 'AH' && quote.postMarketChange) return quote.postMarketChange;
-    if (state === 'PM' && quote.preMarketChange) return quote.preMarketChange;
-    return quote.change;
-  };
-  const getCurrentChangePercent = (quote?: StockQuote) => {
-    if (!quote) return 0;
-    const state = getMarketStatus(quote);
-    if (state === 'AH' && quote.postMarketChangePercent) return quote.postMarketChangePercent;
-    if (state === 'PM' && quote.preMarketChangePercent) return quote.preMarketChangePercent;
-    return quote.changePercent;
-  };
+  // 3. Refactor updateMarketStatusText
+  function updateMarketStatusText() {
+    const now = new Date();
+    const nyFormatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit',
+      weekday: 'short',
+    });
+    const nyParts = nyFormatter.formatToParts(now);
+    const nyHours = parseInt(nyParts.find(p => p.type === 'hour')?.value || '0');
+    const nyMinutes = parseInt(nyParts.find(p => p.type === 'minute')?.value || '0');
+    const nyWeekday = nyParts.find(p => p.type === 'weekday')?.value || 'Sun';
+    const nyDay = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[nyWeekday];
 
+    const mins = nyHours * 60 + nyMinutes;
+    const boundaries = {
+      preMarket: 4 * 60, // 4:00 AM
+      regularStart: 9 * 60 + 30, // 9:30 AM
+      regularEnd: 16 * 60, // 4:00 PM
+      afterHoursEnd: 20 * 60, // 8:00 PM
+    };
+
+    let session = 'closed';
+    let nextSession = 'pre-market';
+    let nextBoundaryMins = 0;
+
+    if (nyDay === 0 || (nyDay === 6 && mins >= boundaries.afterHoursEnd)) {
+      session = 'closed';
+      nextSession = 'pre-market';
+      nextBoundaryMins = ((nyDay === 0 ? 1 : 2) * 24 * 60) + boundaries.preMarket - mins;
+    } else if (nyDay === 6) {
+      session = 'closed';
+      nextSession = 'pre-market';
+      nextBoundaryMins = (2 * 24 * 60) + boundaries.preMarket - mins;
+    } else if (mins < boundaries.preMarket) {
+      session = 'closed';
+      nextSession = 'pre-market';
+      nextBoundaryMins = boundaries.preMarket - mins;
+    } else if (mins < boundaries.regularStart) {
+      session = 'pre-market';
+      nextSession = 'regular session';
+      nextBoundaryMins = boundaries.regularStart - mins;
+    } else if (mins < boundaries.regularEnd) {
+      session = 'open';
+      nextSession = 'after hours';
+      nextBoundaryMins = boundaries.regularEnd - mins;
+    } else if (mins < boundaries.afterHoursEnd) {
+      session = 'after hours';
+      nextSession = 'market close';
+      nextBoundaryMins = boundaries.afterHoursEnd - mins;
+    } else {
+      session = 'closed';
+      nextSession = 'pre-market';
+      nextBoundaryMins = (nyDay === 5 ? 3 * 24 * 60 : 24 * 60) + boundaries.preMarket - mins;
+    }
+
+    const hours = Math.floor(nextBoundaryMins / 60);
+    const minsLeft = nextBoundaryMins % 60;
+    const sessionNames: { [key: string]: string } = {
+      open: 'Market Open',
+      closed: 'Market Closed',
+      'pre-market': 'Pre-market',
+      'after hours': 'After hours',
+    };
+    const nextSessionNames: { [key: string]: string } = {
+      'regular session': 'market open',
+      'after hours': 'after hours',
+      'market close': 'market close',
+      'pre-market': 'pre-market',
+    };
+    const color = SESSION_COLORS[session];
+    const timeDisplay = hours > 0 ? `${hours}h ${minsLeft}m` : `${minsLeft}m`;
+    const text = session === 'open'
+      ? `${Math.floor((boundaries.regularEnd - mins) / 60)}h ${(boundaries.regularEnd - mins) % 60}m until market close`
+      : `${sessionNames[session]} • ${timeDisplay} until ${nextSessionNames[nextSession]}`;
+
+    setMarketStatusDisplay({ text, color });
+  }
+
+  // 4. Consolidate getCurrentPrice, getCurrentChange, getCurrentChangePercent
+  const getCurrentQuoteData = (quote?: StockQuote) => {
+    if (!quote) return { price: 0, change: 0, changePercent: 0 };
+    // For cryptocurrencies, always use regular market data
+    if (quote.quoteType === 'CRYPTOCURRENCY') {
+      return {
+        price: quote.price,
+        change: quote.change,
+        changePercent: quote.changePercent,
+      };
+    }
+    // For stocks/indices, use session-based logic
+    const marketStatus = getMarketStatus(quote);
+    return {
+      price: marketStatus === 'AH' && quote.postMarketPrice ? quote.postMarketPrice :
+             marketStatus === 'PM' && quote.preMarketPrice ? quote.preMarketPrice : quote.price,
+      change: marketStatus === 'AH' && quote.postMarketChange ? quote.postMarketChange :
+              marketStatus === 'PM' && quote.preMarketChange ? quote.preMarketChange : quote.change,
+      changePercent: marketStatus === 'AH' && quote.postMarketChangePercent ? quote.postMarketChangePercent :
+                     marketStatus === 'PM' && quote.preMarketChangePercent ? quote.preMarketChangePercent : quote.changePercent,
+    };
+  };
 
   // Helper to get display name and type for a symbol
   const getItemMeta = (symbol: string) => {
@@ -959,17 +1046,16 @@ export default function StocksPage() {
       const currentPrice = quotes[symbol]?.price;
       const prevPrice = lastPrices.current[symbol];
       if (prevPrice !== undefined && prevPrice !== currentPrice) {
-        const color = currentPrice > prevPrice ? 'rgba(16,185,129,0.25)' : 'rgba(239,68,68,0.25)';
-        if (priceHighlights[symbol]?.timeout) clearTimeout(priceHighlights[symbol].timeout!);
-        const timeout = setTimeout(() => {
-          setPriceHighlights(ph => ({ ...ph, [symbol]: { color: 'transparent', timeout: null } }));
-        }, 2000);
-        setPriceHighlights(ph => ({ ...ph, [symbol]: { color, timeout } }));
+        const direction = currentPrice > prevPrice ? 'up' : 'down';
+        setPriceFlash(prev => ({ ...prev, [symbol]: direction }));
+        setTimeout(() => {
+          setPriceFlash(prev => ({ ...prev, [symbol]: null }));
+        }, 700);
       }
       lastPrices.current[symbol] = currentPrice;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [watchlist, quotes]);
+  }, [quotes, watchlist]);
 
   if (watchlist === null || loading) {
     return (
@@ -1009,6 +1095,7 @@ export default function StocksPage() {
       <ScrollView 
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 100 }}
         refreshControl={
           <RefreshControl 
             refreshing={refreshing} 
@@ -1054,23 +1141,42 @@ export default function StocksPage() {
               <TouchableOpacity
                 onPress={() => setShowSearch(!showSearch)}
                 style={{
-                  backgroundColor: colors.accent,
-                  paddingHorizontal: 16,
-                  paddingVertical: 8,
-                  borderRadius: 8,
+                  backgroundColor: 'transparent',
+                  borderRadius: 12,
+                  padding: 10,
                   shadowColor: colors.accent,
-                  shadowOffset: { width: 0, height: 2 },
-                  shadowOpacity: 0.2,
-                  shadowRadius: 4,
-                  alignSelf: 'flex-start',
-                  marginTop: 4,
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowOpacity: 0.3,
+                  shadowRadius: 8,
+                  elevation: 5,
+                  borderWidth: 1,
+                  borderColor: colors.accent + '33',
+                  overflow: 'hidden',
+                  position: 'relative',
                 }}
+                activeOpacity={0.8}
               >
-                {showSearch ? (
-                  <Text style={{ color: colors.buttonText, fontWeight: '600' }}>Cancel</Text>
-                ) : (
-                  <Ionicons name="search-outline" size={22} color={colors.buttonText} />
-                )}
+                {/* Gradient Background */}
+                <View style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  backgroundColor: colors.accent,
+                  opacity: 0.15,
+                  borderRadius: 12,
+                }} />
+                <Ionicons 
+                  name={showSearch ? "close" : "search"} 
+                  size={24} 
+                  color={colors.accent} 
+                  style={{
+                    transform: [{ scale: showSearch ? 0.9 : 1 }],
+                    transitionProperty: 'transform',
+                    transitionDuration: '200ms',
+                  }} 
+                />
               </TouchableOpacity>
             </View>
           </View>
@@ -1412,9 +1518,9 @@ export default function StocksPage() {
             {applePresetStocks.filter(symbol => !watchlist || !watchlist.includes(symbol) || pendingRemoval.includes(symbol)).map((symbol) => {
               const quote = quotes[symbol];
               const name = quote?.name || symbol;
-              const currentPrice = getCurrentPrice(quote);
-              const currentChange = getCurrentChange(quote);
-              const currentChangePercent = getCurrentChangePercent(quote);
+              const currentPrice = getCurrentQuoteData(quote).price;
+              const currentChange = getCurrentQuoteData(quote).change;
+              const currentChangePercent = getCurrentQuoteData(quote).changePercent;
               const isPositive = currentChange >= 0;
               return (
                 <TouchableOpacity
@@ -1466,154 +1572,25 @@ export default function StocksPage() {
           {watchlist.map((symbol, index) => {
             const quote = quotes[symbol];
             if (!quote) return null;
-            const { name, isIndex, isCrypto } = getItemMeta(symbol);
-            const currentPrice = getCurrentPrice(quote);
-            const currentChange = getCurrentChange(quote);
-            const currentChangePercent = getCurrentChangePercent(quote);
-            const isPositive = currentChange >= 0;
-            const marketStatus = getMarketStatus(quote);
-            const highlightColor = priceHighlights[symbol]?.color || 'transparent';
-            const anim = removalAnims[symbol] || new Animated.Value(1);
-            
-            // Determine if we should show after/pre-market label using Yahoo data
-            let sessionLabel = '';
-            let sessionPrice = null;
-            // Get NY time
-            const now = new Date();
-            const nyTimeString = now.toLocaleString('en-US', { timeZone: 'America/New_York', hour12: false });
-            const timePart = nyTimeString.split(', ')[1];
-            const [nyHour, nyMinute] = timePart.split(':').map(Number);
-            const minsSinceMidnight = nyHour * 60 + nyMinute;
-            
-            if (!isIndex && !isCrypto) {
-              if ((minsSinceMidnight >= 960) || (minsSinceMidnight < 240)) {
-                sessionLabel = 'After Hours';
-                sessionPrice = quote.price;
-              } else if (minsSinceMidnight >= 240 && minsSinceMidnight < 570) {
-                sessionLabel = 'Pre-Market';
-                sessionPrice = quote.price;
-              }
-            }
-            
             return (
-              <Animated.View
+              <WatchlistItem
                 key={symbol}
-                style={{
-                  opacity: anim,
-                  transform: [{ translateX: anim.interpolate({ inputRange: [0, 1], outputRange: [100, 0] }) }],
-                }}
-              >
-                <Swipeable
-                  renderRightActions={() => (
-                    <View style={{
-                      width: 80,
-                      height: '100%',
-                      backgroundColor: '#DC2626',
-                      borderTopRightRadius: 16,
-                      borderBottomRightRadius: 16,
-                      shadowColor: '#000',
-                      shadowOffset: { width: -2, height: 2 },
-                      shadowOpacity: 0.15,
-                      shadowRadius: 6,
-                      elevation: 4,
-                      justifyContent: 'center',
-                      alignItems: 'center',
-                      borderLeftWidth: 1,
-                      borderLeftColor: 'rgba(255,255,255,0.1)',
-                    }}>
-                      <TouchableOpacity
-                        onPress={() => handleRemoveWithAnimation(symbol)}
-                        style={{
-                          width: '100%',
-                          height: '100%',
-                          justifyContent: 'center',
-                          alignItems: 'center',
-                          shadowColor: '#000',
-                          shadowOffset: { width: 1, height: 0 },
-                          shadowOpacity: 0.1,
-                          shadowRadius: 2,
-                        }}
-                        activeOpacity={0.7}
-                      >
-                        <Ionicons name="trash-outline" size={28} color="#FFF" />
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                  overshootRight={false}
-                  overshootLeft={false}
-                  friction={2}
-                  rightThreshold={40}
-                  ref={(ref) => {
-                    swipeableRefs.current[symbol] = ref;
-                  }}
-                >
-                  <TouchableOpacity
-                    onPress={() => router.push(`/chart?symbol=${symbol}`)}
-                    style={{
-                      backgroundColor: colors.searchBackground,
-                      borderRadius: 16,
-                      padding: 20,
-                      marginBottom: 16,
-                      shadowColor: colors.shadow,
-                      shadowOffset: { width: 0, height: 2 },
-                      shadowOpacity: 0.15,
-                      shadowRadius: 8,
-                      elevation: 3,
-                      borderWidth: 1,
-                      borderColor: 'rgba(255,255,255,0.05)',
-                    }}
-                  >
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <View style={{ flex: 1 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
-                          <Text style={{ fontSize: isIndex ? 18 : 22, fontWeight: '700', color: colors.text }}>{name}</Text>
-                          <View style={{ marginLeft: 8, backgroundColor: marketStatus === 'OPEN' ? '#10B981' : marketStatus === 'PM' ? '#F59E42' : marketStatus === 'AH' ? '#8B5CF6' : colors.textSecondary, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 }}>
-                            <Text style={{ fontSize: 10, color: colors.buttonText, fontWeight: '700' }}>{marketStatus}</Text>
-                          </View>
-                          {isIndex && (
-                            <Text style={{ fontSize: 12, color: colors.textSecondary, marginLeft: 8 }}>({symbol})</Text>
-                          )}
-                          {isCrypto && (
-                            <Text style={{ fontSize: 12, color: '#FBBF24', marginLeft: 8 }}>Crypto</Text>
-                          )}
-                        </View>
-                        {!isIndex && (
-                          <Text style={{ fontSize: 14, color: colors.textSecondary, marginBottom: 4 }} numberOfLines={1}>
-                            {symbol}
-                          </Text>
-                        )}
-                        <Text style={{ fontSize: 28, fontWeight: 'bold', color: highlightColor !== 'transparent' ? (highlightColor === 'rgba(16,185,129,0.25)' ? '#10B981' : '#EF4444') : colors.text }}>
-                          ${formatPrice(currentPrice)}
-                        </Text>
-                        <Text style={{ fontSize: 16, fontWeight: '600', color: isPositive ? '#10B981' : '#EF4444' }}>
-                          {isPositive ? '+' : ''}${currentChange.toFixed(2)} ({currentChangePercent.toFixed(2)}%)
-                        </Text>
-                        {/* Yahoo After Hours/Pre-Market label */}
-                        {sessionLabel && sessionPrice != null && (
-                          <Text style={{ fontSize: 13, color: sessionLabel === 'After Hours' ? '#8B5CF6' : '#F59E0B', marginTop: 2 }}>
-                            {sessionLabel}: ${formatPrice(sessionPrice)}
-                          </Text>
-                        )}
-                        {(quote.postMarketPrice > 0 || quote.preMarketPrice > 0) && (
-                          <Text style={{ fontSize: 12, color: '#8B5CF6', marginTop: 2 }}>
-                            {quote.postMarketPrice > 0 ? `AH: $${formatPrice(quote.postMarketPrice)}` : ''}
-                            {quote.preMarketPrice > 0 ? `PM: $${formatPrice(quote.preMarketPrice)}` : ''}
-                          </Text>
-                        )}
-                        {!isIndex && (
-                          <Text style={{ color: colors.textSecondary, fontSize: 14, marginTop: 4 }}>
-                            H: ${formatPrice(quote.dayHigh)} | L: ${formatPrice(quote.dayLow)} | Vol: {formatLargeNumber(quote.volume)}
-                          </Text>
-                        )}
-                      </View>
-                      {/* Drag handle placeholder - removed drag functionality for now */}
-                      <View style={{ padding: 8, marginLeft: 8 }}>
-                        <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
-                      </View>
-                    </View>
-                  </TouchableOpacity>
-                </Swipeable>
-              </Animated.View>
+                symbol={symbol}
+                quote={quote}
+                colors={colors}
+                colorScheme={colorScheme}
+                router={router}
+                getItemMeta={getItemMeta}
+                getCurrentQuoteData={getCurrentQuoteData}
+                getMarketStatus={getMarketStatus}
+                formatPrice={formatPrice}
+                formatLargeNumber={formatLargeNumber}
+                removalAnims={removalAnims}
+                swipeableRefs={swipeableRefs}
+                handleRemoveWithAnimation={handleRemoveWithAnimation}
+                priceHighlights={priceHighlights}
+                priceFlash={priceFlash}
+              />
             );
           })}
         </View>
@@ -1720,9 +1697,9 @@ export default function StocksPage() {
               renderItem={({ item: symbol, drag, isActive }: { item: string; drag: () => void; isActive: boolean }) => {
                 const quote = quotes[symbol];
                 const { name, isIndex, isCrypto } = getItemMeta(symbol);
-                const currentPrice = getCurrentPrice(quote);
-                const currentChange = getCurrentChange(quote);
-                const currentChangePercent = getCurrentChangePercent(quote);
+                const currentPrice = getCurrentQuoteData(quote).price;
+                const currentChange = getCurrentQuoteData(quote).change;
+                const currentChangePercent = getCurrentQuoteData(quote).changePercent;
                 const isPositive = currentChange >= 0;
                 const marketStatus = getMarketStatus(quote);
 
@@ -1787,17 +1764,27 @@ export default function StocksPage() {
                           }}>
                             {name}
                           </Text>
-                          <View style={{ 
-                            marginLeft: 8, 
-                            backgroundColor: marketStatus === 'OPEN' ? '#10B981' : marketStatus === 'PM' ? '#F59E42' : marketStatus === 'AH' ? '#8B5CF6' : colors.textSecondary, 
-                            paddingHorizontal: 6, 
-                            paddingVertical: 2, 
-                            borderRadius: 6 
-                          }}>
-                            <Text style={{ fontSize: 10, color: colors.buttonText, fontWeight: '700' }}>
-                              {marketStatus}
-                            </Text>
-                          </View>
+                          {isCrypto ? (
+                            <View style={{
+                              marginLeft: 8,
+                              backgroundColor: '#2563eb', // blue-700
+                              paddingHorizontal: 6,
+                              paddingVertical: 2,
+                              borderRadius: 6
+                            }}>
+                              <Text style={{ fontSize: 10, color: '#fff', fontWeight: '700' }}>24/7</Text>
+                            </View>
+                          ) : (
+                            <View style={{
+                              marginLeft: 8,
+                              backgroundColor: marketStatus === 'OPEN' ? '#10B981' : marketStatus === 'PM' ? '#F59E42' : marketStatus === 'AH' ? '#8B5CF6' : colors.textSecondary,
+                              paddingHorizontal: 6,
+                              paddingVertical: 2,
+                              borderRadius: 6
+                            }}>
+                              <Text style={{ fontSize: 10, color: colors.buttonText, fontWeight: '700' }}>{marketStatus}</Text>
+                            </View>
+                          )}
                           {isIndex && (
                             <Text style={{ fontSize: 12, color: colors.textSecondary, marginLeft: 8 }}>
                               ({symbol})
@@ -1818,11 +1805,12 @@ export default function StocksPage() {
                             {symbol}
                           </Text>
                         )}
+                        {/* Price with flashing font color on update */}
                         <Text style={{ 
-                          fontSize: 20, 
+                          fontSize: 24,
                           fontWeight: 'bold', 
-                          color: colors.text,
-                          marginBottom: 2
+                          color: priceFlash[symbol] === 'up' ? '#10B981' : priceFlash[symbol] === 'down' ? '#EF4444' : colors.text,
+                          marginBottom: 2,
                         }}>
                           ${formatPrice(currentPrice)}
                         </Text>
@@ -1865,3 +1853,129 @@ export default function StocksPage() {
     </View>
   );
 }
+
+// 5. Extract WatchlistItem component
+const WatchlistItem = ({ symbol, quote, colors, colorScheme, router, getItemMeta, getCurrentQuoteData, getMarketStatus, formatPrice, formatLargeNumber, removalAnims, swipeableRefs, handleRemoveWithAnimation, priceHighlights, priceFlash }: {
+  symbol: string;
+  quote: StockQuote;
+  colors: any;
+  colorScheme: string | null | undefined;
+  router: any;
+  getItemMeta: (symbol: string) => { name: string; isIndex: boolean; isCrypto: boolean };
+  getCurrentQuoteData: (quote?: StockQuote) => { price: number; change: number; changePercent: number };
+  getMarketStatus: (quote?: StockQuote) => string;
+  formatPrice: (price: number) => string;
+  formatLargeNumber: (num: number) => string;
+  removalAnims: Record<string, Animated.Value>;
+  swipeableRefs: React.MutableRefObject<{ [key: string]: Swipeable | null }>;
+  handleRemoveWithAnimation: (symbol: string) => void;
+  priceHighlights: Record<string, { color: string; timeout: ReturnType<typeof setTimeout> | null }>;
+  priceFlash: Record<string, 'up' | 'down' | null>;
+}) => {
+  const { name, isIndex, isCrypto } = getItemMeta(symbol);
+  const { price: currentPrice, change: currentChange, changePercent: currentChangePercent } = getCurrentQuoteData(quote);
+  const isPositive = currentChange >= 0;
+  const marketStatus = getMarketStatus(quote);
+  const anim = removalAnims[symbol] || new Animated.Value(1);
+
+  return (
+    <Animated.View
+      key={symbol}
+      style={{
+        opacity: anim,
+        transform: [{ translateX: anim.interpolate({ inputRange: [0, 1], outputRange: [100, 0] }) }],
+      }}
+      className=""
+    >
+      <Swipeable
+        renderRightActions={() => (
+          <View className="w-20 h-full bg-red-600 rounded-tr-2xl rounded-br-2xl shadow-md justify-center items-center border-l border-white/10">
+            <TouchableOpacity
+              onPress={() => handleRemoveWithAnimation(symbol)}
+              className="w-full h-full justify-center items-center shadow"
+              activeOpacity={0.7}
+            >
+              <Ionicons name="trash-outline" size={28} color="#FFF" />
+            </TouchableOpacity>
+          </View>
+        )}
+        overshootRight={false}
+        overshootLeft={false}
+        friction={2}
+        rightThreshold={40}
+        ref={(ref) => { swipeableRefs.current[symbol] = ref; }}
+      >
+        <TouchableOpacity
+          onPress={() => router.push(`/chart?symbol=${symbol}`)}
+          style={styles.card}
+        >
+          <View
+            className="flex-row items-center justify-between"
+          >
+            <View className="flex-1">
+              <View className="flex-row items-center mb-0.5">
+                <Text className={isIndex ? "text-lg font-bold text-zinc-900 dark:text-zinc-100" : "text-2xl font-bold text-zinc-900 dark:text-zinc-100"}>{name}</Text>
+                {/* Session-style pill for 24/7 if crypto, else normal */}
+                {isCrypto ? (
+                    <>
+                      <Text className="text-xs text-zinc-400 ml-2">Crypto</Text>
+                      <View className="ml-1.5 bg-blue-700 px-2 py-1 rounded">
+                        <Text className="text-[10px] text-white font-bold tracking-wider">24/7</Text>
+                      </View>
+                    </>
+                  ) : (
+                    <View className={
+                      `ml-2 px-2 py-1 rounded ${
+                        marketStatus === 'OPEN' ? 'bg-emerald-500' :
+                        marketStatus === 'PM' ? 'bg-orange-400' :
+                        marketStatus === 'AH' ? 'bg-purple-500' :
+                        'bg-zinc-400'
+                      }`
+                    }>
+                      <Text className="text-[10px] font-bold" style={{ color: colors.buttonText }}>{marketStatus}</Text>
+                    </View>
+                  )}
+                {isIndex && <Text className="text-xs text-zinc-400 ml-2">({symbol})</Text>}
+                {/* No extra crypto badge here, banner above */}
+              </View>
+              {!isIndex && (
+                <Text className="text-sm text-zinc-400 mb-1" numberOfLines={1}>
+                  {symbol}
+                </Text>
+              )}
+              {/* Price with flashing font color on update */}
+              <Text style={{
+                fontSize: 24,
+                fontWeight: 'bold',
+                color: priceFlash[symbol] === 'up' ? '#10B981' : priceFlash[symbol] === 'down' ? '#EF4444' : colors.text,
+                marginBottom: 2,
+              }}>
+                ${formatPrice(currentPrice)}
+              </Text>
+              <Text className={isPositive ? "text-lg font-semibold text-emerald-500" : "text-lg font-semibold text-red-500"}>
+                {isPositive ? '+' : ''}${currentChange.toFixed(2)} ({currentChangePercent.toFixed(2)}%)
+              </Text>
+              {!isIndex && !isCrypto && (
+                <Text className="text-sm text-zinc-400 mt-1">
+                  H: ${formatPrice(quote.dayHigh)} | L: ${formatPrice(quote.dayLow)} | Vol: {formatLargeNumber(quote.volume)}
+                </Text>
+              )}
+              {/* Only show pre/post-market data for non-crypto assets */}
+              {!isCrypto && (quote.postMarketPrice > 0 || quote.preMarketPrice > 0) && marketStatus !== 'OPEN' && (
+                <Text className={marketStatus === 'AH' ? "text-xs text-purple-500 mt-0.5" : "text-xs text-orange-500 mt-0.5"}>
+                  {marketStatus === 'AH' && quote.postMarketPrice > 0 ? `After Hours: $${formatPrice(quote.postMarketPrice)}` : ''}
+                  {marketStatus === 'PM' && quote.preMarketPrice > 0 ? `Pre-Market: $${formatPrice(quote.preMarketPrice)}` : ''}
+                </Text>
+              )}
+            </View>
+            <View className="p-2 ml-2">
+              <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Swipeable>
+    </Animated.View>
+  );
+};
+
+export { fetchYahooQuote };

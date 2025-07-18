@@ -14,17 +14,12 @@ export const SignOutButton = ({ colors }) => {
   };
 
   return (
-    <TouchableOpacity style={{
-      padding: 10,
-      borderRadius: 20,
-      backgroundColor: colors.card,
-      shadowColor: colors.shadow,
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.05,
-      shadowRadius: 2,
-      elevation: 1,
-    }} onPress={handleSignOut}>
-      <Ionicons name="log-out-outline" size={22} color={colors.text} />
+    <TouchableOpacity
+      className="p-2.5 rounded-full shadow"
+      style={{ backgroundColor: colors.card, shadowColor: colors.shadow }}
+      onPress={handleSignOut}
+    >
+      <Ionicons name="log-out-outline" size={20} color={colors.text} />
     </TouchableOpacity>
   );
 };

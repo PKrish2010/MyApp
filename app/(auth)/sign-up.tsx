@@ -1,4 +1,3 @@
-import { styles } from "@/assets/styles/auth.styles.js";
 import { useSignUp } from "@clerk/clerk-expo";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
@@ -74,13 +73,13 @@ export default function SignUpScreen() {
 
   if (pendingVerification) {
     return (
-      <View style={styles.verificationContainer}>
-        <Text style={styles.verificationTitle}>Verify your email</Text>
+      <View className="flex-1 justify-center items-center px-6 py-8">
+        <Text className="text-2xl font-bold my-4 text-center text-[#01579B]">Verify your email</Text>
 
         {error ? (
-          <View style={styles.errorBox}>
+          <View className="flex-row items-center bg-red-100 border border-red-400 rounded-lg px-4 py-2 mb-4">
             <Ionicons name="alert-circle" size={20} color={COLORS.expense} />
-            <Text style={styles.errorText}>{error}</Text>
+            <Text className="ml-2 text-red-700 font-semibold flex-1">{error}</Text>
             <TouchableOpacity onPress={() => setError("")}>
               <Ionicons name="close" size={20} color={COLORS.textLight} />
             </TouchableOpacity>
@@ -88,15 +87,15 @@ export default function SignUpScreen() {
         ) : null}
 
         <TextInput
-          style={[styles.verificationInput, error && styles.errorInput]}
+          className={`w-full rounded-lg px-4 py-3 mb-4 text-base border ${error ? 'border-red-400' : 'border-zinc-200'}`}
           value={code}
           placeholder="Enter your verification code"
           placeholderTextColor="#9A8478"
           onChangeText={(code) => setCode(code)}
         />
 
-        <TouchableOpacity onPress={onVerifyPress} style={styles.button}>
-          <Text style={styles.buttonText}>Verify</Text>
+        <TouchableOpacity className="w-full bg-blue-700 py-3 rounded-lg items-center mb-4" onPress={onVerifyPress}>
+          <Text className="text-white font-semibold text-base">Verify</Text>
         </TouchableOpacity>
       </View>
     );
@@ -109,15 +108,14 @@ export default function SignUpScreen() {
       enableOnAndroid={true}
       enableAutomaticScroll={true}
     >
-      <View style={styles.container}>
-        <Image source={require("../../assets/images/revenue-i2.png")} style={styles.illustration} />
-
-        <Text style={styles.title}>Create Account</Text>
+      <View className="flex-1 justify-center items-center px-6 py-8">
+        <Image source={require("../../assets/images/revenue-i2.png")} className="w-40 h-40 mb-4" />
+        <Text className="text-3xl font-bold my-4 text-center text-[#01579B]">Create Account</Text>
 
         {error ? (
-          <View style={styles.errorBox}>
+          <View className="flex-row items-center bg-red-100 border border-red-400 rounded-lg px-4 py-2 mb-4">
             <Ionicons name="alert-circle" size={20} color={COLORS.expense} />
-            <Text style={styles.errorText}>{error}</Text>
+            <Text className="ml-2 text-red-700 font-semibold flex-1">{error}</Text>
             <TouchableOpacity onPress={() => setError("")}>
               <Ionicons name="close" size={20} color={COLORS.textLight} />
             </TouchableOpacity>
@@ -125,7 +123,7 @@ export default function SignUpScreen() {
         ) : null}
 
         <TextInput
-          style={[styles.input, error && styles.errorInput]}
+          className={`w-full rounded-lg px-4 py-3 mb-4 text-base border ${error ? 'border-red-400' : 'border-zinc-200'}`}
           autoCapitalize="none"
           value={emailAddress}
           placeholderTextColor="#9A8478"
@@ -134,7 +132,7 @@ export default function SignUpScreen() {
         />
 
         <TextInput
-          style={[styles.input, error && styles.errorInput]}
+          className={`w-full rounded-lg px-4 py-3 mb-4 text-base border ${error ? 'border-red-400' : 'border-zinc-200'}`}
           value={password}
           placeholder="Enter password"
           placeholderTextColor="#9A8478"
@@ -142,14 +140,24 @@ export default function SignUpScreen() {
           onChangeText={(password) => setPassword(password)}
         />
 
-        <TouchableOpacity style={styles.button} onPress={onSignUpPress}>
-          <Text style={styles.buttonText}>Sign Up</Text>
+        {pendingVerification && (
+          <TextInput
+            className={`w-full rounded-lg px-4 py-3 mb-4 text-base border ${error ? 'border-red-400' : 'border-zinc-200'}`}
+            value={code}
+            placeholder="Enter verification code"
+            placeholderTextColor="#9A8478"
+            onChangeText={(code) => setCode(code)}
+          />
+        )}
+
+        <TouchableOpacity className="w-full bg-blue-700 py-3 rounded-lg items-center mb-4" onPress={onSignUpPress}>
+          <Text className="text-white font-semibold text-base">Sign Up</Text>
         </TouchableOpacity>
 
-        <View style={styles.footerContainer}>
-          <Text style={styles.footerText}>Already have an account?</Text>
+        <View className="flex-row justify-center items-center mt-2">
+          <Text className="text-zinc-500">Already have an account?</Text>
           <TouchableOpacity onPress={() => router.back()}>
-            <Text style={styles.linkText}>Sign in</Text>
+            <Text className="text-blue-700 font-semibold ml-2">Sign in</Text>
           </TouchableOpacity>
         </View>
       </View>

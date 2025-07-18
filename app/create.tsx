@@ -102,135 +102,72 @@ const CreateScreen = () => {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
+    <View className="flex-1" style={{ backgroundColor: colors.background }}>
       {/* HEADER */}
-      <View style={{ 
-        flexDirection: "row", 
-        alignItems: "center", 
-        justifyContent: "space-between", 
-        paddingHorizontal: 20, 
-        paddingVertical: 16,
-        borderBottomWidth: 1,
-        borderBottomColor: colors.border,
-      }}>
-        <TouchableOpacity style={{ padding: 8 }} onPress={() => router.back()}>
+      <View className="flex-row items-center justify-between px-5 py-4 border-b" style={{ borderBottomColor: colors.border }}>
+        <TouchableOpacity className="p-2" onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={{ fontSize: 18, fontWeight: "600", color: colors.text }}>New Transaction</Text>
+        <Text className="text-lg font-semibold" style={{ color: colors.text }}>New Transaction</Text>
         <TouchableOpacity
-          style={{ 
-            flexDirection: "row", 
-            alignItems: "center", 
-            paddingHorizontal: 16, 
-            paddingVertical: 8,
-            borderRadius: 20,
-            backgroundColor: isLoading ? colors.border : colors.primary,
-            opacity: isLoading ? 0.6 : 1,
-          }}
+          className="flex-row items-center rounded-full px-4 py-2"
+          style={{ backgroundColor: isLoading ? colors.border : colors.primary, opacity: isLoading ? 0.6 : 1 }}
           onPress={handleCreate}
           disabled={isLoading}
         >
-          <Text style={{ color: colors.white, fontWeight: "600", marginRight: 4 }}>
+          <Text className="font-semibold mr-1" style={{ color: colors.white }}>
             {isLoading ? "Saving..." : "Save"}
           </Text>
           {!isLoading && <Ionicons name="checkmark" size={18} color={colors.white} />}
         </TouchableOpacity>
       </View>
 
-      <View style={{ 
-        backgroundColor: colors.card, 
-        margin: 20, 
-        borderRadius: 16, 
-        padding: 20,
-        shadowColor: colors.shadow,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        elevation: 3,
-      }}>
-        <View style={{ flexDirection: "row", marginBottom: 24 }}>
+      <View className="rounded-2xl m-5 p-5 shadow-md" style={{ backgroundColor: colors.card, shadowColor: colors.shadow }}>
+        <View className="flex-row mb-6">
           {/* EXPENSE SELECTOR */}
           <TouchableOpacity
-            style={{ 
-              flex: 1, 
-              flexDirection: "row", 
-              alignItems: "center", 
-              justifyContent: "center", 
-              paddingVertical: 12, 
-              paddingHorizontal: 16, 
-              borderRadius: 12, 
-              marginRight: 8,
-              backgroundColor: isExpense ? colors.expense : colors.background,
-            }}
+            className="flex-1 flex-row items-center py-3 px-4 rounded-xl mr-2"
+            style={{ backgroundColor: isExpense ? colors.expense : colors.background }}
             onPress={() => setIsExpense(true)}
           >
             <Ionicons
               name="arrow-down-circle"
               size={22}
               color={isExpense ? colors.white : colors.expense}
-              style={{ marginRight: 8 }}
+              className="mr-2"
             />
-            <Text style={{ 
-              fontWeight: "600", 
-              color: isExpense ? colors.white : colors.expense 
-            }}>
+            <Text className="font-semibold" style={{ color: isExpense ? colors.white : colors.expense }}>
               Expense
             </Text>
           </TouchableOpacity>
-
-          {/* INCOME SELECTOR */}
           <TouchableOpacity
-            style={{ 
-              flex: 1, 
-              flexDirection: "row", 
-              alignItems: "center", 
-              justifyContent: "center", 
-              paddingVertical: 12, 
-              paddingHorizontal: 16, 
-              borderRadius: 12, 
-              marginLeft: 8,
-              backgroundColor: !isExpense ? colors.income : colors.background,
-            }}
+            className="flex-1 flex-row items-center py-3 px-4 rounded-xl ml-2"
+            style={{ backgroundColor: !isExpense ? colors.income : colors.background }}
             onPress={() => setIsExpense(false)}
           >
             <Ionicons
               name="arrow-up-circle"
               size={22}
               color={!isExpense ? colors.white : colors.income}
-              style={{ marginRight: 8 }}
+              className="mr-2"
             />
-            <Text style={{ 
-              fontWeight: "600", 
-              color: !isExpense ? colors.white : colors.income 
-            }}>
+            <Text className="font-semibold" style={{ color: !isExpense ? colors.white : colors.income }}>
               Income
             </Text>
           </TouchableOpacity>
         </View>
 
         {/* AMOUNT CONTAINER */}
-        <View style={{ 
-          flexDirection: "row", 
-          alignItems: "center", 
-          marginBottom: 24, 
-          paddingHorizontal: 16, 
-          paddingVertical: 12, 
-          backgroundColor: colors.background, 
-          borderRadius: 12 
-        }}>
-          <Text style={{ fontSize: 24, fontWeight: "600", color: colors.text, marginRight: 8 }}>$</Text>
+        <View className="flex-row items-center mb-6 px-4 py-3 rounded-xl" style={{ backgroundColor: colors.background }}>
+          <Text className="text-2xl font-semibold mr-2" style={{ color: colors.text }}>$</Text>
           <TextInput
-            style={{ 
-              flex: 1, 
-              fontSize: 24, 
-              fontWeight: "600", 
-              color: colors.text 
-            }}
-            placeholder="0.00"
-            placeholderTextColor={colors.textLight}
+            className="flex-1 text-2xl font-semibold"
+            style={{ color: colors.text }}
+            keyboardType="numeric"
             value={amount}
             onChangeText={setAmount}
-            keyboardType="numeric"
+            placeholder="0.00"
+            placeholderTextColor={colors.textLight}
           />
         </View>
 

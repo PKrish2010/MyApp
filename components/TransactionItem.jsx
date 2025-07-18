@@ -18,48 +18,31 @@ export const TransactionItem = ({ item, onDelete, colors }) => {
   const iconName = CATEGORY_ICONS[item.category] || "pricetag-outline";
 
   return (
-    <View style={{
-      backgroundColor: colors.card,
-      borderRadius: 12,
-      marginBottom: 10,
-      flexDirection: "row",
-      alignItems: "center",
-      shadowColor: colors.shadow,
-      shadowOffset: {
-        width: 0,
-        height: 1,
-      },
-      shadowOpacity: 0.1,
-      shadowRadius: 2,
-      elevation: 2,
-    }} key={item.id}>
-      <TouchableOpacity style={{ flex: 1, flexDirection: "row", padding: 15, alignItems: "center" }}>
-        <View style={{
-          width: 40,
-          height: 40,
-          borderRadius: 20,
-          backgroundColor: colors.background,
-          justifyContent: "center",
-          alignItems: "center",
-          marginRight: 12,
-        }}>
+    <View
+      className="rounded-xl mb-2.5 flex-row items-center shadow-md"
+      style={{ backgroundColor: colors.card, shadowColor: colors.shadow }}
+      key={item.id}
+    >
+      <TouchableOpacity className="flex-1 flex-row p-4 items-center">
+        <View
+          className="w-10 h-10 rounded-full justify-center items-center mr-3"
+          style={{ backgroundColor: colors.background }}
+        >
           <Ionicons name={iconName} size={22} color={isIncome ? colors.income : colors.expense} />
         </View>
-        <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: 16, fontWeight: "500", color: colors.text, marginBottom: 4 }}>{item.title}</Text>
-          <Text style={{ fontSize: 14, color: colors.textLight }}>{item.category}</Text>
+        <View className="flex-1">
+          <Text className="text-base font-semibold" style={{ color: colors.text }}>{item.category}</Text>
+          <Text className="text-sm" style={{ color: colors.textLight }}>{item.note}</Text>
         </View>
-        <View style={{ alignItems: "flex-end" }}>
-          <Text
-            style={{ fontSize: 16, fontWeight: "600", marginBottom: 4, color: isIncome ? colors.income : colors.expense }}
-          >
+        <View className="items-end">
+          <Text className="text-base font-semibold" style={{ color: isIncome ? colors.income : colors.expense }}>
             {isIncome ? "+" : "-"}${Math.abs(parseFloat(item.amount)).toFixed(2)}
           </Text>
-          <Text style={{ fontSize: 12, color: colors.textLight }}>{formatDate(item.created_at)}</Text>
+          <Text className="text-xs" style={{ color: colors.textLight }}>{formatDate(item.date)}</Text>
         </View>
-      </TouchableOpacity>
-      <TouchableOpacity style={{ padding: 15, borderLeftWidth: 1, borderLeftColor: colors.border }} onPress={() => onDelete(item.id)}>
-        <Ionicons name="trash-outline" size={20} color={colors.expense} />
+        <TouchableOpacity onPress={() => onDelete(item.id)} className="ml-3">
+          <Ionicons name="trash-outline" size={20} color={colors.expense} />
+        </TouchableOpacity>
       </TouchableOpacity>
     </View>
   );

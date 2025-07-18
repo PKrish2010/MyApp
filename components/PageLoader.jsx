@@ -2,12 +2,7 @@ import { ActivityIndicator, View } from "react-native";
 
 const PageLoader = ({ colors }) => {
   return (
-    <View style={{
-      flex: 1,
-      justifyContent: "center",
-      alignItems: "center",
-      backgroundColor: colors.background,
-    }}>
+    <View className="flex-1 justify-center items-center" style={{ backgroundColor: colors.background }}>
       <ActivityIndicator size="large" color={colors.primary} />
     </View>
   );
