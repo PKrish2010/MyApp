@@ -61,19 +61,6 @@ export default function Layout() {
               }}
             />
             <Tabs.Screen 
-              name="invest"
-              options={{
-                title: "Invest",
-                headerShown: false,
-                tabBarIcon: ({ focused }) => (
-                  <View className="items-center justify-center w-[180%] mt-5 h-[80%]">
-                    <Ionicons name="trending-up-outline" size={22} color={focused ? colors.primary : colors.textLight} />
-                    <Text style={{ color: focused ? colors.primary : colors.textLight, fontSize: 12, marginTop: 5 }}>Invest</Text>
-                  </View>
-                )
-              }}
-            />
-            <Tabs.Screen 
               name="portfolio"
               options={{
                 title: "Portfolio",
@@ -82,6 +69,19 @@ export default function Layout() {
                   <View className="items-center justify-center w-[180%] mt-5 h-[80%]">
                     <Ionicons name="pie-chart-outline" size={22} color={focused ? colors.primary : colors.textLight} />
                     <Text style={{ color: focused ? colors.primary : colors.textLight, fontSize: 12, marginTop: 5 }}>Portfolio</Text>
+                  </View>
+                )
+              }}
+            />
+            <Tabs.Screen 
+              name="invest"
+              options={{
+                title: "Invest",
+                headerShown: false,
+                tabBarIcon: ({ focused }) => (
+                  <View className="items-center justify-center w-[180%] mt-5 h-[80%]">
+                    <Ionicons name="trending-up-outline" size={22} color={focused ? colors.primary : colors.textLight} />
+                    <Text style={{ color: focused ? colors.primary : colors.textLight, fontSize: 12, marginTop: 5 }}>Invest</Text>
                   </View>
                 )
               }}

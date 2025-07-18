@@ -487,7 +487,7 @@ export default function StocksPage() {
           duration: 300,
           useNativeDriver: true,
         }).start(async () => {
-          setJustAdded(null);
+          setTimeout(() => setJustAdded(null), 0); // <-- Fix: defer state update
           await addToWatchlist(symbol);
           if (!isSearch) setPendingRemoval((prev) => prev.filter((s) => s !== symbol));
         });
@@ -1906,7 +1906,7 @@ const WatchlistItem = ({ symbol, quote, colors, colorScheme, router, getItemMeta
         ref={(ref) => { swipeableRefs.current[symbol] = ref; }}
       >
         <TouchableOpacity
-          onPress={() => router.push(`/chart?symbol=${symbol}`)}
+          onPress={() => router.push(`/chart?symbol=${symbol}&from=watchlist`)}
           style={styles.card}
         >
           <View

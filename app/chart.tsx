@@ -106,12 +106,25 @@ export default function ChartScreen() {
   const colorScheme = useColorScheme();
   const colors = getColors(colorScheme);
   const router = useRouter();
-  const { symbol, name } = useLocalSearchParams();
+  const { symbol, name, from } = useLocalSearchParams();
   
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [stockInfo, setStockInfo] = useState<any>(null);
   const [stockInfoError, setStockInfoError] = useState<string | null>(null);
+
+  const handleBackPress = () => {
+    if (from === 'watchlist') {
+      router.push('/watchlist');
+    } else if (from === 'portfolio') {
+      router.push('/portfolio');
+    } else if (from === 'home') {
+      router.push('/');
+    } else {
+      // Fallback to home if no from parameter
+      router.push('/');
+    }
+  };
 
   useEffect(() => {
     setStockInfoError(null);
@@ -185,7 +198,7 @@ export default function ChartScreen() {
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       {/* Custom Header */}
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: 48, paddingBottom: 16, paddingHorizontal: 16, backgroundColor: colors.background, zIndex: 10 }}>
-        <TouchableOpacity onPress={() => router.push('/watchlist')} style={{ marginRight: 16, padding: 8 }}>
+        <TouchableOpacity onPress={handleBackPress} style={{ marginRight: 16, padding: 8 }}>
           <Text style={{ fontSize: 22, color: colors.accent }}>←</Text>
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
